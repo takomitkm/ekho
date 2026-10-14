@@ -1,0 +1,514 @@
+/***************************************************************************
+ * Copyright (C) 2008-2024 by Cameron Wong                                 *
+ * name in passport: HUANG GUANNENG                                        *
+ * email: hgneng at gmail.com                                              *
+ * website: https://eguidedog.net                                          *
+ *                                                                         *
+ * This program is free software; you can redistribute it and/or           *
+ * modify it under the terms of the GNU General Public License             *
+ * as published by the Free Software Foundation; either version 2          *
+ * of the License, or any later version.                                   *
+ *                                                                         *
+ * This program is distributed in the hope that it will be useful,         *
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of          *
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           *
+ * GNU General Public License for more details.                            *
+ *                                                                         *
+ * You should have received a copy of the GNU General Public License       *
+ * along with this program; if not, write to the Free Software             *
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,              *
+ * MA  02110-1301, USA.                                                    *
+ **************************************************************************/
+#include <dirent.h>
+#include <errno.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+#include <fstream>
+#include <iostream>
+#include <filesystem>
+#include <thread>
+#include <cstdint>
+#include <cstdlib>
+#ifdef ENABLE_CURL
+#include <curl/curl.h>
+#endif
+#include "config.h"
+#include "ekho.h"
+#include "ekho_dict.h"
+#include "ekho_impl.h"
+#include "ekho_typedef.h"
+#include "utf8.h"
+
+#ifdef ENABLE_ESPEAK
+#include "espeak-ng/speak_lib.h"
+#endif
+
+#if 1
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#endif
+
+using namespace ekho;
+using namespace std;
+
+
+bool Ekho::mDebug = false;
+bool Ekho::emotiVoiceEnabled = false;
+bool Ekho::zhttsEnabled = false;
+bool Ekho::piperEnabled = false;
+bool Ekho::piperEnglishEnabled = false;
+bool Ekho::coquiEnabled = false;
+
+void Ekho::debug(bool flag) {
+  Ekho::mDebug = flag;
+  EkhoImpl::debug(flag);
+  PhoneticSymbol::debug = flag;
+}
+
+Ekho::Ekho() {
+  this->m_pImpl = new EkhoImpl();
+  Ekho::init();
+}
+
+Ekho::Ekho(string voice) {
+  this->m_pImpl = new EkhoImpl(voice);
+  Ekho::init();
+}
+
+void Ekho::init() {
+  this->musicxmlMinuteRate = 58; // default is 120. 58 is for demo.xml
+  this->sndFile = nullptr;
+}
+
+Ekho::~Ekho(void) { delete this->m_pImpl; }
+
+Dict& Ekho::getDict() {
+  return this->m_pImpl->mDict;
+}
+
+int Ekho::saveWav(string text, string filename) {
+  return this->m_pImpl->saveWav(text, filename);
+}
+
+int Ekho::saveOgg(string text, string filename) {
+  return this->m_pImpl->saveOgg(text, filename);
+}
+
+void Ekho::setEnglishVoice(const char *voice) {
+  this->m_pImpl->setEnglishVoice(voice);
+}
+
+void Ekho::setPcmCache(bool b) { this->m_pImpl->setPcmCache(b); }
+
+bool Ekho::isSpeaking() { return this->m_pImpl->isSpeaking(); }
+
+
+int Ekho::writeToSonicStream(short *pcm, int frames, OverlapType type) {
+  return this->m_pImpl->writeToSonicStream(pcm, frames, type);
+}
+
+void Ekho::finishWritePcm() { this->m_pImpl->finishWritePcm(); }
+
+int Ekho::writePcm(short *pcm, int frames, void *arg, OverlapType type) {
+  return EkhoImpl::writePcm(pcm, frames, arg, type);
+}
+
+void *Ekho::speechDaemon(void *args) { return EkhoImpl::speechDaemon(args); }
+
+int Ekho::play(string file) { return this->m_pImpl->play(file); }
+
+int Ekho::setVoice(string voice) { return this->m_pImpl->setVoice(voice); }
+
+string Ekho::getVoice() { return this->m_pImpl->getVoice(); }
+
+int Ekho::speak(string text, void (*pCallback)(void *), void *pCallbackArgs) {
+  return this->m_pImpl->speak(text, pCallback, pCallbackArgs);
+}
+
+int Ekho::stopAndSpeak(string text, void (*pCallback)(void *),
+                       void *pCallbackArgs) {
+  return this->m_pImpl->stopAndSpeak(text, pCallback, pCallbackArgs);
+}
+
+int Ekho::blockSpeak(string text) { return this->m_pImpl->blockSpeak(text); }
+
+int Ekho::pause() { return this->m_pImpl->pause(); }
+
+int Ekho::resume() { return this->m_pImpl->resume(); }
+
+int Ekho::stop() { return this->m_pImpl->stop(); }
+
+void Ekho::enableSsml() {
+  this->m_pImpl->supportSsml = true;
+}
+
+void Ekho::disableSsml() {
+  this->m_pImpl->supportSsml = false;
+}
+
+long Ekho::getAvailableMemory() {
+  std::uint64_t availableMemory = 0;
+  
+#if 1
+  long pages = sysconf(_SC_AVPHYS_PAGES);
+  long page_size = sysconf(_SC_PAGESIZE);
+  availableMemory = pages * page_size;
+#endif
+
+  if (mDebug) {
+    cerr << "getAvailableMemory:" << availableMemory << endl;
+  }
+
+  return availableMemory;
+}
+
+bool Ekho::checkEmotiVoiceServerStarted() {
+  int size = 0;
+  short* pcm = this->m_pImpl->getPcmFromServer(Ekho::EMOTIVOICE_PORT, "的", size, Ekho::EMOTIVOICE_AMPLIFY_RATE);
+  if (pcm) {
+    Ekho::emotiVoiceEnabled = true;
+    Word::emotiVoiceEnabled = true;
+    delete[] pcm;
+    pcm = nullptr;
+    return true;
+  }
+  return false;
+}
+
+bool Ekho::enableEmotiVoice(bool autoStart) {
+  // 先检查EmotiVoice服务进程是否存在，再确认启用。
+  if (this->checkEmotiVoiceServerStarted()) {
+    return true;
+  } else if (autoStart) {
+    // server not running, try to start EmotiVoice server
+
+    // make sure there are more than 1 CPU core, or it will be too slow for the system
+    unsigned int cores = std::thread::hardware_concurrency();
+    if (mDebug) {
+      cerr << "Number of CPU cores: " << cores << endl;
+    }
+
+    // return false;
+    // @fixme: doesn't work within speechd
+    if (cores > 1) {
+      // make sure there are more than 2G memory available.
+      if (this->getAvailableMemory() > 2000000000 &&
+          system(("which " + std::string("EmotiVoiceServer.py") + " > /dev/null 2>&1").c_str()) == 0) {
+        if (mDebug) {
+          cerr << "starting EmotiVoice server..." << endl;
+        }
+        system("EmotiVoiceServer.py &");
+        std::this_thread::sleep_for(std::chrono::seconds(10));
+        return this->checkEmotiVoiceServerStarted();
+      }
+    }
+  }
+
+  return false;
+
+  // 检查Coqui英文服务进程是否存在，再确认启用。
+  /*
+  pcm = this->m_pImpl->getPcmFromServer(Ekho::COQUI_PORT, "a", size, Ekho::COQUI_AMPLIFY_RATE);
+  if (pcm) {
+    Ekho::coquiEnabled = true;
+    pcm = nullptr;
+  }*/
+}
+
+bool Ekho::checkZhttsServerStarted() {
+  int size = 0;
+  short* pcm = this->m_pImpl->getPcmFromServer(Ekho::ZHTTS_PORT, "的", size, Ekho::ZHTTS_AMPLIFY_RATE);
+  if (pcm) {
+    Ekho::zhttsEnabled = true;
+    Word::zhttsEnabled = true;
+    delete[] pcm;
+    pcm = nullptr;
+    return true;
+  }
+  return false;
+}
+
+bool Ekho::checkPiperMandarinServerStarted() {
+  int size = 0;
+
+  short* pcm = this->m_pImpl->getPcmFromPiperServer("的", size, Ekho::PIPER_MANDARIN_PORT);
+  if (pcm) {
+    Ekho::piperEnabled = true;
+    Word::piperEnabled = true;
+    delete[] pcm;
+    pcm = nullptr;
+    return true;
+  }
+  return false;
+}
+
+bool Ekho::checkPiperEnglishServerStarted() {
+  int size = 0;
+
+  short* pcm = this->m_pImpl->getPcmFromPiperServer("hello", size, Ekho::PIPER_ENGLISH_PORT);
+  if (pcm) {
+    Ekho::piperEnglishEnabled = true;
+    delete[] pcm;
+    //cerr << "delete " << pcm << " " << size << endl;
+    pcm = nullptr;
+    return true;
+    // @fixme: crash after return. don't know why.
+  }
+  return false;
+}
+
+bool Ekho::enableZhtts(bool autoStart) {
+  // 先检查zhtts服务进程是否存在，再确认启用。
+  if (this->checkZhttsServerStarted()) {
+    return true;
+  } else if (autoStart &&
+    system(("which " + std::string("zhttsServer.py") + " > /dev/null 2>&1").c_str()) == 0) {
+    //if (mDebug) {
+    cerr << "starting zhtts server..." << endl;
+    //}
+    string cmd = "/opt/miniconda3/envs/py38/bin/python /usr/bin/zhttsServer.py &";
+    system(cmd.c_str());
+
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+    return this->checkZhttsServerStarted();
+  }
+
+  return false;
+}
+
+#ifndef ENABLE_CURL
+  std::cerr << "ekho: built without libcurl; enablePiper() is a no-op." << std::endl;
+  return false;
+#endif
+bool Ekho::enablePiper(bool autoStart) {
+  curl_global_init(CURL_GLOBAL_ALL);  // Initialize curl globally
+  //this->enablePiperMandarin();
+  return this->enablePiperEnglish();
+}
+
+bool Ekho::enablePiperMandarin(bool autoStart) {
+  // 先检查piper服务进程是否存在，再确认启用。
+  if (this->checkPiperMandarinServerStarted()) {
+    return true;
+  }
+
+  if (autoStart) {
+    if (this->enablePiperModel("zh_CN-xiao_ya-medium", 5000)) {
+      if (this->checkPiperMandarinServerStarted()) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+#ifndef ENABLE_CURL
+  std::cerr << "ekho: built without libcurl; enablePiperEnglish() is a no-op." << std::endl;
+  return false;
+#endif
+bool Ekho::enablePiperEnglish(bool autoStart) {
+  // 先检查piper服务进程是否存在，再确认启用。
+  if (this->checkPiperEnglishServerStarted()) {
+    return true;
+  }
+
+  if (autoStart) {
+    if (this->enablePiperModel("en_US-amy-low", 5001)) {
+      if (this->checkPiperEnglishServerStarted()) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+bool Ekho::enablePiperModel(string model, int port) {
+  string piperDataPath = this->getDict().mDataPath + "/piper";
+  // check whether piperDataPath exists
+  if (filesystem::is_directory(piperDataPath)) {
+    cerr << "starting piper server at port " << port << endl;
+    setenv("TRANSFORMERS_OFFLINE", "1", 1);
+    setenv("HF_ENDPOINT", "https://hf-mirror.com", 1);
+    string portStr = std::to_string(port);
+    string cmd = "bash -c \"source /opt/miniconda3/etc/profile.d/conda.sh && conda activate base && cd " +
+      piperDataPath +
+      " && python3 -m piper.http_server -m " + model + " --host 127.0.0.1 --port " + portStr +
+      " 2>/dev/null &\"";
+    //cerr << cmd << endl;
+    system(cmd.c_str());
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    return true;
+  } else {
+    cerr << "piper folder not found at " << piperDataPath << endl;
+    return false;
+  }
+}
+
+void Ekho::setSpeakIsolatedPunctuation(bool b) {
+  this->m_pImpl->setSpeakIsolatedPunctuation(b);
+}
+
+bool Ekho::getSpeakIsolatedPunctuation() {
+  return this->m_pImpl->getSpeakIsolatedPunctuation();
+}
+
+void Ekho::setSpeed(int tempo_delta) {
+  return this->m_pImpl->setSpeed(tempo_delta);
+}
+
+int Ekho::getSpeed() { return this->m_pImpl->getSpeed(); }
+
+void Ekho::setOverlap(int overlap) {
+  this->m_pImpl->mOverlap = overlap;
+}
+
+void Ekho::setEnglishSpeed(int delta) {
+  return this->m_pImpl->setEnglishSpeed(delta);
+}
+
+int Ekho::getEnglishSpeed() { return this->m_pImpl->getSpeed(); }
+
+void Ekho::setPitch(int pitch_delta) { this->m_pImpl->setPitch(pitch_delta); }
+
+int Ekho::getPitch() { return this->m_pImpl->getPitch(); }
+
+void Ekho::setVolume(int volume_delta) {
+  this->m_pImpl->setVolume(volume_delta);
+}
+
+int Ekho::getVolume() { return this->m_pImpl->getVolume(); }
+
+void Ekho::setRate(int rate_delta) { this->m_pImpl->setRate(rate_delta); }
+
+int Ekho::getRate() { return this->m_pImpl->getRate(); }
+
+int Ekho::startServer(int port) { return this->m_pImpl->startServer(port); }
+
+// the first byte is tempo(speed) delta
+int Ekho::request(string ip, int port, Command cmd, string text,
+                  string outfile) {
+  return this->m_pImpl->request(ip, port, cmd, text, outfile);
+}
+
+short* Ekho::synth3(string text, int& samples) {
+  string filepath = Audio::genTempFilename();
+  this->m_pImpl->saveWav(text, filepath);
+
+  FILE *f = fopen(filepath.c_str(), "rb+");
+  short *pcm = nullptr;
+  if (f) {
+    fseek(f, 0L, SEEK_END);
+    long filesize = ftell(f); // get file size
+    if (filesize > 44) {
+      samples = (filesize - 44) / 2;
+      fseek(f, 44L ,SEEK_SET); // skip 44 bytes header in WAV file
+      pcm = new short[samples]; // allocate the read buf
+      fread(pcm, 2, samples, f);
+    }
+    fclose(f);
+
+    remove(filepath.c_str());
+  }
+
+  return pcm;
+}
+
+// for Android
+SynthCallback* Ekho::synth4Callback = nullptr;
+EkhoImpl* Ekho::impl = nullptr;
+int Ekho::postProcess(short* pcm, int frames, void* arg, OverlapType type) {
+  EkhoImpl* pEkho = Ekho::impl;
+
+  if (pEkho->isStopped) {
+    // 清空缓存
+    pEkho->audio->flushFrames();
+    short* buffer = new short[65536];
+
+    do {
+      frames = pEkho->audio->readShortFrames(buffer, 65536);
+    } while (frames > 0);
+
+    delete[] buffer;
+    buffer = nullptr;
+  } else {
+    int flush_frames = pEkho->writeToSonicStream(pcm, frames, type);
+
+    if (flush_frames) {
+      short* buffer = new short[65536];
+
+      do {
+        frames = pEkho->audio->readShortFrames(buffer, 65536);
+        if (frames > 0) {
+          Ekho::synth4Callback(buffer, frames, arg, type);
+        }
+      } while (frames > 0);
+
+      delete[] buffer;
+      buffer = nullptr;
+    }
+  }
+
+  return 0;
+}
+
+// 这里返回给callback的pcm经过speed和pitch的调整
+int Ekho::synth4(string text, SynthCallback* callback, void* userdata) {
+  Ekho::impl = this->m_pImpl;
+  Ekho::synth4Callback = callback;
+  this->m_pImpl->isStopped = false;
+  return this->m_pImpl->synth2(text, Ekho::postProcess, userdata);
+}
+
+// for speech-dispatcher
+int Ekho::synth(const char *text, SpeechdSynthCallback *callback) {
+  this->m_pImpl->setSpeechdSynthCallback(callback);
+  this->m_pImpl->speak(text);
+  return 0;
+}
+
+void Ekho::setPunctuationMode(EkhoPuncType mode) {
+  this->m_pImpl->setPunctuationMode(mode);
+}
+
+void Ekho::setSampleRate(int sampleRate) {
+  this->m_pImpl->audio->setOutputSampleRate(sampleRate);
+}
+
+int Ekho::getSampleRate(void) {
+  return this->m_pImpl->audio->outputSampleRate;
+}
+
+void Ekho::setChannels(int channels) {
+  this->m_pImpl->audio->setChannels(channels);
+}
+
+void Ekho::setCapLetterRecognMode(EkhoCapLetterRecognType mode) {
+#ifdef ENABLE_ESPEAK
+  int espeak_cap_mode = 0;
+  switch (mode) {
+  case EKHO_CAP_NONE:
+    espeak_cap_mode = 800;
+    break;
+  case EKHO_CAP_SPELL:
+    espeak_cap_mode = 2;
+    break;
+  case EKHO_CAP_ICON:
+    espeak_cap_mode = 1;
+    break;
+  }
+
+  espeak_SetParameter(espeakCAPITALS, espeak_cap_mode, 1);
+#endif
+}

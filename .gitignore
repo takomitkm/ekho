@@ -1,0 +1,35 @@
+# build products
+/out/
+/build-aux/
+/m4/
+/Makefile
+/Makefile.in
+/aclocal.m4
+/autom4te.cache/
+/config.h
+/config.h.in
+/config.log
+/config.status
+/configure
+/configure~
+/stamp-h1
+.deps/
+.libs/
+*.o
+*.lo
+*.la
+*.a
+*.so
+*.so.*
+.deps
+.dirstamp
+
+# voice packs are large and fetched separately
+/ekho-data/pinyin/
+/ekho-data/jyutping/
+/ekho-data/alphabet/
+/ekho-data/piper/
+
+# scratch
+*.wav.tmp
+/_work/

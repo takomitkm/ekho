@@ -1,0 +1,179 @@
+/***************************************************************************
+ * Copyright (C) 2008-2024 by Cameron Wong                                 *
+ * name in passport: HUANG GUANNENG                                        *
+ * email: hgneng at gmail.com                                              *
+ * website: https://eguidedog.net                                       *
+ *                                                                         *
+ * This program is free software; you can redistribute it and/or           *
+ * modify it under the terms of the GNU General Public License             *
+ * as published by the Free Software Foundation; either version 2          *
+ * of the License, or any later version.                                   *
+ *                                                                         *
+ * This program is distributed in the hope that it will be useful,         *
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of          *
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           *
+ * GNU General Public License for more details.                            *
+ *                                                                         *
+ * You should have received a copy of the GNU General Public License       *
+ * along with this program; if not, write to the Free Software             *
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,              *
+ * MA  02110-1301, USA.                                                    *
+ **************************************************************************/
+#include <iostream>
+#include <sndfile.h>
+#include <string.h>
+#include <stdio.h>
+#include "audio.h"
+#include "ekho_dict.h"
+
+using namespace std;
+namespace ekho {
+  bool PhoneticSymbol::debug = false;
+
+  const char* PhoneticSymbol::getPcm(FILE *file, int &size) {
+    if (PhoneticSymbol::debug) {
+      cerr << "PhoneticSymbol::getPcm:" << "symbol=" <<
+        this->symbol << ", offset=" << offset <<
+        ", bytes=" << bytes << endl;
+    }
+
+
+    // 如果该拼音没有找到5声调音频，尝试用1升调代替
+    int symbolLen = strlen(symbol);
+    if (bytes == 0 && symbolLen > 0 && symbol[symbolLen - 1] == '5') {
+      char s[16] = {0};
+      strncat(s, symbol, 15);
+      s[symbolLen - 1] = '1';
+      if (PhoneticSymbol::debug) {
+        cerr << symbol << " not found. try " << s << endl;
+      }
+      PhoneticSymbol *phon = Dict::me->getPhoneticSymbol(s);
+      if (phon->bytes > 0) {
+        offset = phon->offset;
+        bytes = phon->bytes;
+      }
+    }
+
+    if (!mPcm && file && fseek(file, offset, SEEK_SET) == 0) {
+      string tmpFilePath = Audio::genTempFilename();
+      FILE *gsmfile = fopen(tmpFilePath.c_str(), "wb+");
+
+      if (!gsmfile) {
+        cerr << "Fail to create temparary file." << endl;
+        size = 0;
+        return 0;
+      }
+      
+      const int bufferSize = 128000;
+      char buffer[bufferSize];
+      int b = bytes;
+      while (b > 0) {
+        if (b <= bufferSize) {
+          fread(buffer, 1, b, file);
+          fwrite(buffer, 1, b, gsmfile);
+          b = 0;
+        } else {
+          b -= bufferSize;
+          fread(buffer, 1, bufferSize, file);
+          fwrite(buffer, 1, bufferSize, gsmfile);
+        }
+      }
+
+
+      rewind(gsmfile);
+      SF_INFO sfinfo;
+      memset(&sfinfo, 0, sizeof(SF_INFO));
+      int fd = fileno(gsmfile);
+      SNDFILE *sndfile = sf_open_fd(fd, SFM_READ, &sfinfo, 1);
+      readSndfile(sndfile, sfinfo);
+      remove(tmpFilePath.c_str());
+
+    }
+
+    size = mSize;
+
+
+    return mPcm;
+  }
+
+  void PhoneticSymbol::readSndfile(SNDFILE *sndfile, SF_INFO sfinfo) {
+      if (!sndfile) {
+//            cerr << "Fail to open file " << wav_file << " at " << __LINE__ <<
+//              " of " << __FILE__ << endl;                
+      } else {
+//            sfinfo.channels = 1; // this->sfinfo.channels is corrupted
+        if (sfinfo.channels > 2) {
+          static bool show_channel_error = true;
+          if (show_channel_error) {
+            cerr << "Invalid channels: " << sfinfo.channels << endl;
+            show_channel_error = false;
+          }
+
+          sfinfo.channels = 1;
+        }
+        int samples = 0;
+
+        /* sfinfo.channels has not been taken into account .... */
+        switch (sfinfo.format & SF_FORMAT_SUBMASK) {
+          case SF_FORMAT_VORBIS:
+          case SF_FORMAT_GSM610:
+          case SF_FORMAT_PCM_16:
+            mSize = (int)sfinfo.frames * 2 * sfinfo.channels;
+            if (mPcm) {
+              delete[] mPcm;
+              mPcm = nullptr;
+            }
+            mPcm = new char[mSize];
+            samples = (int)sf_readf_short(sndfile, (short int*)mPcm, sfinfo.frames);
+            break;
+          case SF_FORMAT_PCM_S8:
+          case SF_FORMAT_PCM_U8:
+          default:
+            cerr << "Unknown soundfile format: " << (sfinfo.format & SF_FORMAT_SUBMASK) << endl;
+        }
+
+        if (samples != sfinfo.frames) {
+          cerr << "Fail to read : " << samples <<
+            " frames out of " << sfinfo.frames << " have been read." << endl;
+        }
+      }
+  };
+
+  const char* PhoneticSymbol::getPcm(const char *wavDir, const char *postfix, int &size, SF_INFO &sfinfo) {
+    if (PhoneticSymbol::debug) {
+      cerr << "PhoneticSymbol::getPcm:"  << "symbol=" <<
+        this->symbol << ", wavDir=" << wavDir <<
+        ", postfix=" << postfix << endl;
+    }
+
+    if (!mPcm) {
+      memset(&sfinfo, 0, sizeof(SF_INFO));
+
+      string wav_file = wavDir;
+      // char | 32 means get lower case
+      if (this->symbol[0] == '\\')
+      {
+        char c = this->symbol[1] | 32;
+        if (c >= 'a' && c <= 'z') {
+          wav_file += "/../alphabet/";
+          wav_file += c;
+          wav_file += ".wav";
+        } else {
+          return 0;
+        }
+      } else {
+        wav_file += "/";
+        wav_file += this->symbol;
+        wav_file += ".";
+        wav_file += postfix;
+      }
+
+      SNDFILE *sndfile = sf_open(wav_file.c_str(), SFM_READ, &sfinfo);
+      readSndfile(sndfile, sfinfo);
+      sf_close(sndfile);
+    }
+
+    size = mSize;
+    return mPcm;
+  };
+}
