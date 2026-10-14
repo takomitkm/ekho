@@ -137,6 +137,12 @@ int main(int argc, char**argv) {
 
   Ekho *recorder = new Ekho("jyutping"); // same to Cantonese
   recorder->saveWav("123456789", "output.wav");
+#ifdef ENABLE_OGG
+  recorder->saveOgg("123456789", "output.ogg");
+#endif
+#ifdef ENABLE_MP3
+  recorder->saveMp3("123456789", "output.mp3");
+#endif
   delete(recorder);
 
   cameron = new Ekho("Cantonese");

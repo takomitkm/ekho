@@ -29,12 +29,12 @@
 #include <map>
 #include "config.h"
 
-
+// ENABLE_ESPEAK comes from config.h now, decided by configure after probing
+// for espeak-ng. Upstream hardcoded it here inside a "#if 1", in a header
+// that gets installed: that is why the English path could be compiled out
+// with no way to turn it back on, and why every other English back end was
+// dragged in or out with it.
 #define ENABLE_ENGLISH
-
-#if 1
-#define ENABLE_ESPEAK
-#endif
 
 
 #include "ekho_dict.h"

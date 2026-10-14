@@ -153,7 +153,34 @@ int Ekho::loadPitchFile() {
 double Ekho::detectPitch(const short *pcm, int size, int sampleRate) {
   return 0;
 /*
-#if 1
+#ifdef ENABLE_MUSICXML
+  // slide intot 0.1s chunks
+  int chunkSize = sampleRate / 100;
+  int chunkCount = size / chunkSize;
+  std::vector<double> chunks[chunkCount];
+
+  for (int i = 0; i < chunkCount; i++) {
+    chunks[i].resize(chunkSize);
+    for (int j = 0; j < chunkSize; j++) {
+      chunks[i][j] = (double)pcm[i * chunkSize + j] / 32768;
+    }
+
+    double pitchYin = pitch::yin<double>(chunks[i], sampleRate);
+    double pitchMpm = pitch::mpm<double>(chunks[i], sampleRate);
+    double pitchPyin = pitch::pyin<double>(chunks[i], sampleRate);
+    double pitchPmpm = pitch::pmpm<double>(chunks[i], sampleRate);
+    double pitchSwipe = pitch::swipe<double>(chunks[i], sampleRate);
+
+    cerr << "pitch: yin=" << pitchYin
+        << ", mpm=" << pitchMpm
+        << ", Pyin=" << pitchPyin
+        << ", pitchPmpm=" << pitchPmpm
+        << ", pitchSwipe=" << pitchSwipe
+        << endl;
+  }
+
+  return 0;
+#else
 #endif
 */
 }

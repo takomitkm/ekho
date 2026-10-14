@@ -217,7 +217,9 @@ string Word::findPinyinVoiceFile(list<WordPinyin>& wordPinyinList,
  */
 list<Word> Word::split(string text) {
   list<Word> wordlist;
-  TextType type;
+  // gcc cannot prove every path that reaches a push_back() assigns this, and
+  // reading an uninitialised enum is undefined behaviour, not a warning.
+  TextType type = PHONETIC;
   string lastword;  // ENGLISH_TEXT
   string last_chinese_word;
   list<Character> char_list = Dict::me->replaceNumbers(Character::split(text));
@@ -226,6 +228,15 @@ list<Word> Word::split(string text) {
   string symbol;
 
 /*
+#ifdef ENABLE_FRISO
+    filtered_text = Character::join(charlist2);
+    friso_set_text(mFrisoTask, (char *)filtered_text.c_str());
+    const char *friso_text = filtered_text.c_str();
+    while (friso_next(mFriso, mFrisoConfig, mFrisoTask)) {
+      string word(mFrisoTask->hits->word);
+          first_word_phons =
+              lookupFirstWord(friso_text + mFrisoTask->hits->offset);
+#endif
 }*/
   
   for (; itor != char_list.end(); itor++) {

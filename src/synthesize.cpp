@@ -329,7 +329,7 @@ short* EkhoImpl::getPcmFromServer(int port, const string& text, int& size, float
   server_addr.sin_family = AF_INET;  
   server_addr.sin_port = htons(port); // 服务器端口号  
   server_addr.sin_addr.s_addr = inet_addr("127.0.0.1"); // 服务器IP地址  
-  ekho_bzero(&(server_addr.sin_zero), 8);  
+  memset(&(server_addr.sin_zero), 0, 8);  
 
   // 连接服务器  
   if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {  

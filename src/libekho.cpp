@@ -286,12 +286,10 @@ bool Ekho::enableZhtts(bool autoStart) {
   return false;
 }
 
-#ifndef ENABLE_CURL
-  std::cerr << "ekho: built without libcurl; enablePiper() is a no-op." << std::endl;
-  return false;
-#endif
 bool Ekho::enablePiper(bool autoStart) {
+  #ifdef ENABLE_CURL
   curl_global_init(CURL_GLOBAL_ALL);  // Initialize curl globally
+  #endif
   //this->enablePiperMandarin();
   return this->enablePiperEnglish();
 }
@@ -313,10 +311,6 @@ bool Ekho::enablePiperMandarin(bool autoStart) {
   return false;
 }
 
-#ifndef ENABLE_CURL
-  std::cerr << "ekho: built without libcurl; enablePiperEnglish() is a no-op." << std::endl;
-  return false;
-#endif
 bool Ekho::enablePiperEnglish(bool autoStart) {
   // 先检查piper服务进程是否存在，再确认启用。
   if (this->checkPiperEnglishServerStarted()) {

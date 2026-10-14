@@ -136,7 +136,9 @@ EkhoImpl::~EkhoImpl(void) {
 #endif
 
   if (Ekho::piperEnabled || Ekho::piperEnglishEnabled) {
+    #ifdef ENABLE_CURL
     curl_global_cleanup();
+    #endif
   }
   // TODO: free mAlphabetPcmCache
 }
@@ -782,6 +784,9 @@ int EkhoImpl::stop(void) {
   }
 
   this->mPendingFrames = 0;
+#ifdef ENABLE_FESTIVAL
+  festival_eval_command("(audio_mode 'shutup)");
+#endif
 
 #ifdef ENABLE_ESPEAK
   espeak_Cancel();

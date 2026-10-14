@@ -531,7 +531,7 @@ int Dict::setVoice(string voice) {
       index_file += ".index";
     }
 
-    if (ekho_access(index_file.c_str()) != -1) {
+    if (access(index_file.c_str(), F_OK) != -1) {
       if (mLanguage == TIBETAN) {
         loadEkhoVoiceFile(mDataPath + "/pinyin");
       } else {
@@ -683,7 +683,20 @@ list<PhoneticSymbol *> Dict::lookup(list<Character> &charList, bool firstWord) {
 
     if (!(di->character.phonSymbol)) {
       /*
-#if 1
+#ifdef WIN32
+      // backward compatable to version before 6.0 which call sync instead of
+      // sync2
+      // output \unknownchar
+      di->character.code = cItor->code;  // needed?
+      string s = di->character.getUtf8();
+      const char *c = s.c_str();
+      char *sym = new char[strlen(c) + 2];
+      sym[0] = '\\';
+      strcpy(sym + 1, c);
+      // @TODO: memory leak, but don't care
+      PhoneticSymbol *unknownSymbol = new PhoneticSymbol(sym);
+      di->character.phonSymbol = unknownSymbol;
+#else*/
       di->character.phonSymbol = PhoneticSymbol::getUnknownPhoneticSymbol();
 //#endif
     }
