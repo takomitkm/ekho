@@ -515,6 +515,13 @@ void Dict::addSpecialSymbols(void) {
 
 int Dict::setVoice(string voice) {
   if (mVoice.compare(voice) == 0) return 0;
+  // mVoice is the answer to "which voice is loaded", and callers trust it. It
+  // has to be set optimistically here (the loading code below reads it), so
+  // remember the old value and put it back on every failure path: otherwise a
+  // failed switch leaves getVoice() naming a voice whose audio was never loaded,
+  // and the next setVoice() for that name early-returns at the line above and
+  // silently keeps the previous voice's data.
+  string oldVoice = mVoice;
   mVoice = "English";
 
   int key_char = 0x7684;
@@ -567,6 +574,7 @@ int Dict::setVoice(string voice) {
       ps = lookup(22986);
       if (!ps) {
         cerr << "Fail to lookup char of " << key_char << endl;
+        mVoice = oldVoice;
         return -1;
       }
     }
@@ -589,6 +597,7 @@ int Dict::setVoice(string voice) {
         } else {
           cerr << "No voice data file is found in " << path <<
             ". Please make sure 'de5' file exists if you are using pinyin." << endl;
+          mVoice = oldVoice;
           return -1;
         }
       }
@@ -615,6 +624,7 @@ int Dict::setVoice(string voice) {
     return 0;
   } else {
     cerr << "Fail to find voice data directory: " << path << endl;
+    mVoice = oldVoice;
     return -1;
   }
 }
@@ -886,6 +896,16 @@ int Dict::getSymbolCode(SymbolLetter *root, const char *symbol) {
   }
 
   if (!sym[code].index) {
+    // Index 0 means "absent" and is never handed out, and SYMBOL_ARRAY_SIZE
+    // entries means the highest usable index is SYMBOL_ARRAY_SIZE - 1. Running
+    // off the end here used to overwrite mKaSymbolLetter, which is the trie this
+    // loop is walking, so the crash surfaced as a wild pointer read a few
+    // instructions later rather than as anything resembling a bounds error.
+    if (mKaSymbolIndex + 1 >= SYMBOL_ARRAY_SIZE) {
+      cerr << "Fail to getSymbolCode: symbol table full (" << SYMBOL_ARRAY_SIZE
+           << " entries), cannot add '" << symbol << "'" << endl;
+      return 0;
+    }
     mKaSymbolIndex++;
     char *s = (char *)malloc(strlen(symbol) + 1);
     memcpy(s, symbol, strlen(symbol) + 1);

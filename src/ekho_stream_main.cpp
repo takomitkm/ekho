@@ -44,7 +44,8 @@ void usage(const char* argv0) {
           "      --chunk-delay=N  sleep N ms between pieces (simulates an LLM)\n"
           "      --no-segment     synthesise the whole buffer on every append\n"
           "      --no-normalize   skip text normalisation\n"
-          "      --max-segment-chars=N  cap on chars synthesised per append (default 48, 0=uncapped)\n"          "      --ring-ms=N      PCM ring size in milliseconds (default 4000)\n"
+          "      --max-segment-chars=N  cap on chars per synth4() burst (default: derived from the ring)\n"
+          "      --ring-ms=N      PCM ring size in milliseconds (default 4000)\n"
           "      --consumer-delay=N  consumer polls every N ms (default 1)\n"
           "      --samplerate=N   output sample rate (default: voice native)\n"
           "      --json           emit machine-readable stats on stdout\n",

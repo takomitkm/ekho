@@ -74,7 +74,20 @@ class Dict {
   ~Dict(void);
 
   static Dict* me;
-  const static int SYMBOL_ARRAY_SIZE = 8000;
+  // Size of the phonetic symbol tables below. `code` (SymbolCode) and
+  // SymbolLetter::index are both 16-bit, so this must stay under 65536.
+  //
+  // 8000 was too small, and not because any one language has that many symbols.
+  // mKaSymbolArray holds the union of the additional dictionaries -- Hakka,
+  // Korean, Toisanese, Tibetan and Ngangien -- because the symbol trie and its
+  // counter are never reset between language loads. Measured on the shipped
+  // voice pack, loading those five in turn reaches roughly 9500 entries, so the
+  // old limit was crossed and mKaSymbolArray[mKaSymbolIndex] wrote past the end
+  // of the array, over mKaSymbolLetter -- the trie being walked at that moment.
+  // The result was a segfault inside getSymbolCode(), nowhere near the store
+  // that caused it. getSymbolCode() now refuses to go past the end as well, so
+  // a bigger pack degrades to a reported error rather than a crash.
+  const static int SYMBOL_ARRAY_SIZE = 16384;
   static bool mDebug;
   string mDataPath;
   // SNDFILE *mVoiceFile;

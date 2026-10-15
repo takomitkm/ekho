@@ -163,6 +163,13 @@ class StreamingSession {
   // initialiser list matching this or -Wreorder fires.
   bool segmented_;
   bool normalize_;
+  // "No more appends are accepted." Distinct from ended_, which means "all
+  // output has been produced". flush() sets this first and ended_ only once the
+  // tail has been synthesised: read()/finished() treat "ended_ and an empty
+  // ring" as end-of-stream, so publishing ended_ early would let a consumer
+  // that is already waiting declare the stream over before the final segment
+  // exists, and its audio would be written into a ring nobody reads.
+  bool sealed_;
   bool ended_;
   bool stopped_;
   size_t minTailChars_;

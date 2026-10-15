@@ -466,6 +466,13 @@ int Ekho::synth4(string text, SynthCallback* callback, void* userdata) {
   return this->m_pImpl->synth2(text, Ekho::postProcess, userdata);
 }
 
+int Ekho::drainAudio(SynthCallback* callback, void* userdata) {
+  Ekho::impl = this->m_pImpl;
+  Ekho::synth4Callback = callback;
+  this->m_pImpl->isStopped = false;
+  return this->m_pImpl->drainAudio(callback, userdata);
+}
+
 // for speech-dispatcher
 int Ekho::synth(const char *text, SpeechdSynthCallback *callback) {
   this->m_pImpl->setSpeechdSynthCallback(callback);

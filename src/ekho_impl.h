@@ -207,6 +207,10 @@ class EkhoImpl {
   static void* speechDaemon(void* args);
   static int writePcm(short* pcm, int frames, void* arg, OverlapType type);
   void finishWritePcm(void);
+
+  // Public entry point for Ekho::drainAudio(): hands the tail still sitting in
+  // the overlap buffer and the resampler to the caller's callback.
+  int drainAudio(SynthCallback* callback, void* userdata);
   int writeToSonicStream(short* pcm, int frames, OverlapType type);
 
 

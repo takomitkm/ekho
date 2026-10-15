@@ -531,6 +531,38 @@ void EkhoImpl::finishWritePcm(void) {
   writePcm(0, 0, this, OVERLAP_NONE);
 }
 
+int EkhoImpl::drainAudio(SynthCallback* callback, void* userdata) {
+  if (callback == nullptr) {
+    return 0;
+  }
+
+  // Publish whatever the overlap buffer still holds. writeToSonicStream() is
+  // the only code that knows how much of mPendingPcm has not been resampled
+  // yet, and OVERLAP_NONE with zero new frames means "emit all of it".
+  if (mPendingFrames > 0) {
+    short pad = 0;
+    writeToSonicStream(&pad, 0, OVERLAP_NONE);
+  }
+
+  // Then make the resampler emit the input it has not converted. sonic's flush
+  // pads with silence, converts, and then trims the padding off again, so this
+  // yields exactly the missing tail and no extra silence. The flush is not
+  // sticky: the stream keeps working normally afterwards.
+  this->audio->flushFrames();
+
+  short* buffer = new short[BUFFER_SIZE];
+  int frames;
+  do {
+    frames = this->audio->readShortFrames(buffer, BUFFER_SIZE);
+    if (frames > 0) {
+      callback(buffer, frames, userdata, OVERLAP_NONE);
+    }
+  } while (frames > 0);
+  delete[] buffer;
+
+  return 0;
+}
+
 void* EkhoImpl::speechDaemon(void *args) {
   if (EkhoImpl::mDebug) {
     cerr << "EkhoImpl::speechDaemon begin" << endl;
@@ -650,7 +682,6 @@ int EkhoImpl::setVoice(string voice) {
              voice.compare("cmn") == 0) {
     voice = "pinyin";
     mIsMale = false;
-    setSpeed(0);
     // setEnglishVoice("voice_cmu_us_slt_arctic_hts");
   } else if (voice.compare("Korean") == 0 || voice.compare("ko") == 0) {
     voice = "hangul";
@@ -674,26 +705,41 @@ int EkhoImpl::setVoice(string voice) {
     mIsMale = true;
   }
 
+  // Fail here rather than a few lines down. mDict.setVoice() assumes
+  // setLanguage() has populated the dictionary with the new language's
+  // characters, and on a dictionary that failed to load (Tibetan, for instance,
+  // has no data directory in the shipped voice pack) it walks a structure that
+  // was never filled in and segfaults. Ignoring this return code therefore meant
+  // any caller could select an uninstalled voice and take the process down; in a
+  // server that is one HTTP request from any client on the network.
+  int langRet = 0;
   if (voice.find("jyutping") == 0) {
-    mDict.setLanguage(CANTONESE);
+    langRet = mDict.setLanguage(CANTONESE);
   } else if (voice.find("pinyin") == 0) {
-    mDict.setLanguage(MANDARIN);
+    langRet = mDict.setLanguage(MANDARIN);
   } else if (voice.find("hangul") == 0) {
-    mDict.setLanguage(KOREAN);
+    langRet = mDict.setLanguage(KOREAN);
   } else if (voice.find("hakka") == 0) {
-    mDict.setLanguage(HAKKA);
+    langRet = mDict.setLanguage(HAKKA);
   } else if (voice.find("toisanese") == 0) {
-    mDict.setLanguage(TOISANESE);
+    langRet = mDict.setLanguage(TOISANESE);
   } else if (voice.find("tibetan") == 0) {
-    mDict.setLanguage(TIBETAN);
+    langRet = mDict.setLanguage(TIBETAN);
   } else if (voice.find("ngangien") == 0) {
-    mDict.setLanguage(NGANGIEN);
+    langRet = mDict.setLanguage(NGANGIEN);
   } else if (voice.find("English") == 0) {
-    mDict.setLanguage(ENGLISH);
+    langRet = mDict.setLanguage(ENGLISH);
   } else {
     cerr << "Invalid voice: " << voice << ". Fallback to Mandarin." << endl;
-    mDict.setLanguage(MANDARIN);
+    langRet = mDict.setLanguage(MANDARIN);
     voice = "pinyin";
+  }
+
+  if (langRet != 0) {
+    cerr << "ekho: voice '" << voice
+         << "' is not installed: its dictionary data is missing from "
+         << mDict.mDataPath << endl;
+    return -2;
   }
 
   if (mDict.setVoice(voice.c_str()) != 0) {
@@ -702,6 +748,22 @@ int EkhoImpl::setVoice(string voice) {
   }
 
   this->initStream();
+
+  // Apply the tempo normalisation for the voice that initStream() just loaded.
+  //
+  // This has to happen here, after initStream(), and not in the Mandarin branch
+  // above: setSpeed() derives baseDelta from mDict.mSfinfo.frames, and until
+  // setLanguage()/setVoice()/initStream() have run, mSfinfo still describes the
+  // *previous* voice -- usually nothing at all, so frames is 0, baseDelta comes
+  // out 0 and setTempo() is never called. Selecting Mandarin therefore used to
+  // leave the tempo at 1.0, and the engine spoke 2.4x slower than intended.
+  //
+  // The CLI hid this by calling setSpeed() again after setVoice() (ekho.cpp),
+  // so only callers that drove the library directly -- Ekho::synth4(), which is
+  // the whole streaming path -- noticed. Same bug shape as the "espeak was never
+  // initialised outside speechDaemon()" one: the CLI did the extra step by hand
+  // and the library never learned to do it itself.
+  setSpeed(0);
 
   return 0;
 }

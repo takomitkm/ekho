@@ -148,6 +148,18 @@ class Ekho {
      * callback will be called time from time when buffer is ready
      */
     int synth4(string text, SynthCallback* callback, void* userdata);
+
+    // Flush whatever the audio pipeline is still holding -- the overlap buffer
+    // and the resampler's unconverted input tail -- through `callback`.
+    //
+    // Must be called once when an utterance is finished. The resampler is fed
+    // in bursts and keeps the samples it could not convert yet (about 290
+    // frames for the Mandarin pack). They are real audio, and if nobody drains
+    // them they come out at the front of the *next* utterance instead: two
+    // identical requests then produce two different waveforms, which is exactly
+    // what a streaming server doing request after request must not do.
+    // `saveWav` never noticed because it is one shot per process.
+    int drainAudio(SynthCallback* callback, void* userdata);
     static int postProcess(short* pcm, int frames, void* arg, OverlapType type);
 
     /* no pause is allowed

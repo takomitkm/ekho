@@ -9,9 +9,10 @@
 #   rtf       audio seconds per synthesis second
 #   dropped   16-bit frames the PCM ring had to discard
 #
-# Sections 1-2 are correctness (the streaming path must produce the same audio
-# as the one-shot path, and must be deterministic). Sections 3-5 are the
-# streaming properties. Sections 6-8 are the other back ends.
+# Sections 1-2 are correctness (nothing lost, nothing varying), sections 3-5 are
+# the streaming properties, 6-8 the other back ends. Measurement tables are
+# printed; anything that is a claim about correctness also asserts, and the
+# script exits non-zero if any assertion fails.
 set -u
 
 SRC=${SRC:-/mnt/s/apps/llm/agentwork/ekho-linux}
@@ -35,12 +36,21 @@ cat > "$SIM/nums.txt" <<'EOF'
 EOF
 
 hr() { printf '\n%s\n' "=== $* ==="; }
+ok()  { printf '  ok    %s\n' "$*"; }
+bad() { printf '  FAIL  %s\n' "$*"; FAILED=$((FAILED + 1)); }
+FAILED=0
 
 # Pull a field out of the driver's JSON without needing jq.
 field() { sed -n "s/.*\"$2\":\([^,}]*\).*/\1/p" <<<"$1"; }
 
 dur() { awk -v b="$(stat -c%s "$1" 2>/dev/null || echo 0)" \
              -v r="${2:-44100}" 'BEGIN{printf "%.3f", (b-44)/2/r}'; }
+
+# |a-b| as a fraction of a, tested against a limit.
+within() { awk -v a="$1" -v b="$2" -v lim="$3" \
+  'BEGIN{d=(a>b?a-b:b-a); exit !(d <= a*lim)}'; }
+
+md5of() { md5sum "$1" 2>/dev/null | cut -c1-16; }
 
 hr "1. correctness: streaming must not lose audio"
 # Same text, same voice, three ways. The one-shot CLI is the reference; the
@@ -61,80 +71,146 @@ for v in Mandarin Cantonese; do
     -o "$SIM/k_seg.wav" >/dev/null 2>&1
   printf '    %-38s %9s B  %8s s\n' "streaming, clause-segmented" \
     "$(stat -c%s "$SIM/k_seg.wav")" "$(dur "$SIM/k_seg.wav")"
+  ref=$(stat -c%s "$SIM/k_oneshot.wav")
+  for f in k_whole k_seg; do
+    if within "$ref" "$(stat -c%s "$SIM/$f.wav")" 0.15; then
+      ok "$v: $f within 15% of the one-shot CLI"
+    else
+      bad "$v: $f is $(stat -c%s "$SIM/$f.wav") B against $ref B"
+    fi
+  done
 done
 
 hr "1b. byte-chunked input must not lose characters"
 # A byte-chunked caller splits multi-byte characters; the session holds the
-# partial sequence over to the next call. Chunk sizes 1/3/6 all land inside a
-# 3-byte CJK character at different phases and must give the same audio.
-printf '  %-14s %10s %10s\n' chunk_B bytes diff_vs_whole
-base=$(stat -c%s "$SIM/k_seg.wav" 2>/dev/null || echo 0)
+# partial sequence over to the next call. Chunk sizes 1/2/3/4/6/7 all land
+# inside a 3-byte CJK character at different phases, and every one of them must
+# produce exactly the same audio.
+printf '  %-8s %10s  %s\n' chunk_B bytes md5
+ref11=""
+chunkbad=0
 for c in 1 2 3 4 6 7; do
   "$OUT/ekho-stream" -v Mandarin -f "$SIM/zh_long.txt" --chunk "$c" --json \
     -o "$SIM/k_c$c.wav" >/dev/null 2>&1
   b=$(stat -c%s "$SIM/k_c$c.wav")
-  printf '  %-14s %10s %10s\n' "$c" "$b" "$((b - base))"
+  h=$(md5of "$SIM/k_c$c.wav")
+  printf '  %-8s %10s  %s\n' "$c" "$b" "$h"
+  if [ -z "$ref11" ]; then
+    ref11="$h"; refb="$b"
+  elif [ "$h" != "$ref11" ]; then
+    bad "chunk size $c gave different audio ($h vs $ref11)"
+    chunkbad=1
+  fi
 done
+if [ "$chunkbad" = 0 ]; then
+  ok "all chunk sizes produced byte-identical audio ($refb B)"
+fi
 
 hr "2. determinism (same input three times)"
+# Pure Chinese, so this is a real determinism claim and not a tolerance. See the
+# note under section 7 about why text with ASCII in it cannot be held to this.
+det_ref=""
 for i in 1 2 3; do
   "$OUT/ekho-stream" -v Mandarin -f "$SIM/zh_stream.txt" --chunk 6 --chunk-delay 5 \
     --json -o "$SIM/det_$i.wav" >/dev/null 2>&1
-  printf '  run %d: %s  %s B\n' "$i" "$(md5sum "$SIM/det_$i.wav" | cut -c1-16)" \
-    "$(stat -c%s "$SIM/det_$i.wav")"
+  h=$(md5of "$SIM/det_$i.wav")
+  printf '  run %d: %s  %s B\n' "$i" "$h" "$(stat -c%s "$SIM/det_$i.wav")"
+  if [ -z "$det_ref" ]; then det_ref="$h"; elif [ "$h" != "$det_ref" ]; then det_bad=1; fi
 done
+if [ "${det_bad:-0}" = 0 ]; then
+  ok "three runs byte-identical"
+else
+  bad "runs differed"
+fi
 
 hr "3. the streaming property: text arriving one token at a time"
 # This is the case the design exists for. `--chunk-delay` stands in for an LLM
 # emitting tokens; first_ms is then bounded by how long the first clause takes
 # to arrive, and gen_ms shows how much redundant work each strategy does.
 echo "  arrival: 12 bytes every 30 ms (about four Chinese characters)"
-printf '  %-22s %10s %10s %10s %9s %8s\n' mode first_ms gen_ms total_ms rtf dropped
+printf '  %-18s %10s %10s %10s %9s %8s\n' mode first_ms gen_ms total_ms rtf dropped
 for mode in "--no-segment" ""; do
   label=$([ -z "$mode" ] && echo "clause-segmented" || echo "whole-buffer")
   r=$("$OUT/ekho-stream" -v Mandarin -f "$SIM/zh_stream.txt" \
       --chunk 12 --chunk-delay 30 --json $mode -o "$SIM/arr_$label.wav" 2>/dev/null)
-  printf '  %-22s %10s %10s %10s %9s %8s\n' "$label" \
+  printf '  %-18s %10s %10s %10s %9s %8s\n' "$label" \
     "$(field "$r" first_ms)" "$(field "$r" gen_ms)" "$(field "$r" total_ms)" \
     "$(field "$r" rtf)" "$(field "$r" dropped_frames)"
+  d=$(field "$r" dropped_frames)
+  [ "$d" = 0 ] && ok "$label: dropped nothing" || bad "$label: dropped $d frames"
 done
 
 hr "4. first-chunk latency against chunk size (no arrival delay)"
-printf '  %-12s %10s %10s %10s %8s\n' chunk_B first_ms gen_ms segments dropped
+printf '  %-8s %10s %10s %10s %8s\n' chunk_B first_ms gen_ms segments dropped
 for c in 6 12 24 48 0; do
   lbl=$([ "$c" = 0 ] && echo all || echo "$c")
   r=$("$OUT/ekho-stream" -v Mandarin -f "$SIM/zh_stream.txt" --chunk "$c" --json \
       -o "$SIM/cs.wav" 2>/dev/null)
-  printf '  %-12s %10s %10s %10s %8s\n' "$lbl" "$(field "$r" first_ms)" \
+  printf '  %-8s %10s %10s %10s %8s\n' "$lbl" "$(field "$r" first_ms)" \
     "$(field "$r" gen_ms)" "$(field "$r" segments)" "$(field "$r" dropped_frames)"
 done
 
-hr "5. backpressure: nothing is dropped, whatever the ring size"
-# The producer blocks instead of discarding audio. A ring smaller than one
-# segment must still lose zero frames -- it just makes synthesis slower.
-printf '  %-12s %10s %10s %8s %10s\n' ring_ms segments gen_ms rtf dropped
+hr "5. backpressure: the ring size must not change the audio"
+# The producer blocks instead of discarding audio, so a ring smaller than one
+# segment must still lose zero frames -- it just makes synthesis slower. The
+# segment cap is pinned: left to itself the driver derives it from the ring
+# size, which would change the clause cuts and with them the audio, and then
+# this test could not tell a backpressure bug from a segmentation change.
+printf '  %-10s %9s %10s %8s %8s  %s\n' ring_ms segments gen_ms rtf dropped md5
+bp_ref=""
+bp_failed_before=$FAILED
 for ms in 100 250 1000 4000 60000; do
-  r=$("$OUT/ekho-stream" -v Mandarin -f "$SIM/zh_stream.txt" --ring-ms "$ms" --json \
-      -o "$SIM/bp.wav" 2>/dev/null)
-  printf '  %-12s %10s %10s %8s %10s\n' "$ms" "$(field "$r" segments)" \
-    "$(field "$r" gen_ms)" "$(field "$r" rtf)" "$(field "$r" dropped_frames)"
+  r=$("$OUT/ekho-stream" -v Mandarin -f "$SIM/zh_stream.txt" --ring-ms "$ms" \
+      --max-segment-chars 24 --json -o "$SIM/bp_$ms.wav" 2>/dev/null)
+  h=$(md5of "$SIM/bp_$ms.wav")
+  printf '  %-10s %9s %10s %8s %8s  %s\n' "$ms" "$(field "$r" segments)" \
+    "$(field "$r" gen_ms)" "$(field "$r" rtf)" "$(field "$r" dropped_frames)" "$h"
+  d=$(field "$r" dropped_frames)
+  [ "$d" = 0 ] || bad "ring ${ms}ms dropped $d frames"
+  if [ -z "$bp_ref" ]; then
+    bp_ref="$h"
+  elif [ "$h" != "$bp_ref" ]; then
+    bad "ring ${ms}ms produced different audio ($h vs $bp_ref)"
+  fi
 done
+if [ "$FAILED" = "$bp_failed_before" ]; then
+  ok "nothing dropped and identical audio at every ring size (100 ms .. 60 s)"
+fi
 
 hr "6. text normalisation"
-"$OUT/ekho-stream" -v Mandarin -f "$SIM/nums.txt" --json -o "$SIM/nums.wav" 2>/dev/null
+# Numbers and units are spelled out. That is strictly more syllables, so the
+# normalised reading must be longer than the raw one.
+r=$("$OUT/ekho-stream" -v Mandarin -f "$SIM/nums.txt" --json \
+    -o "$SIM/nums.wav" 2>/dev/null)
 echo "  input : $(cat "$SIM/nums.txt")"
 n=$(stat -c%s "$SIM/nums.wav")
 "$OUT/ekho-stream" -v Mandarin -f "$SIM/nums.txt" --no-normalize --json \
   -o "$SIM/nums_raw.wav" >/dev/null 2>&1
-printf '  audio : normalised %s B  vs  raw %s B  (+%s%%)\n' "$n" \
-  "$(stat -c%s "$SIM/nums_raw.wav")" \
-  "$(( (n - $(stat -c%s "$SIM/nums_raw.wav")) * 100 / $(stat -c%s "$SIM/nums_raw.wav") ))"
+raw=$(stat -c%s "$SIM/nums_raw.wav")
+printf '  audio : normalised %s B  vs  raw %s B  (+%s%%)\n' "$n" "$raw" \
+  "$(( (n - raw) * 100 / raw ))"
+if [ "$n" -gt "$raw" ]; then
+  ok "normalisation lengthened the reading (numbers spoken out)"
+else
+  bad "normalised output ($n B) is not longer than raw ($raw B)"
+fi
 
 hr "7. English via espeak-ng"
 r=$("$OUT/ekho-stream" -v Mandarin -f "$SIM/en_mixed.txt" --json \
     -o "$SIM/en.wav" 2>&1)
 echo "  $r"
-[ -s "$SIM/en.wav" ] && echo "  audio: $(stat -c%s "$SIM/en.wav") B" || echo "  audio: MISSING"
+if [ -s "$SIM/en.wav" ]; then
+  ok "mixed Chinese/English produced $(stat -c%s "$SIM/en.wav") B"
+else
+  bad "mixed Chinese/English produced no audio"
+fi
+# Note: this section deliberately does not assert byte-identity. espeak-ng is
+# not reproducible on its own -- a C program calling espeak_Synth() five times
+# with the same sentence gets five different lengths and five different
+# waveforms, and re-initialising espeak between calls does not help, because it
+# draws on a continuing internal pseudo-random sequence while building prosody.
+# Chinese never touches espeak and is exact (section 2); text containing ASCII
+# inherits espeak's variance.
 
 hr "8. peak RSS"
 for spec in "ekho|-v Mandarin -f $SIM/zh_long.txt -o $SIM/rss.wav" \
@@ -144,3 +220,11 @@ for spec in "ekho|-v Mandarin -f $SIM/zh_long.txt -o $SIM/rss.wav" \
   kb=$(/usr/bin/time -f '%M' -o /tmp/rss.txt "$OUT/$prog" $args >/dev/null 2>&1; cat /tmp/rss.txt)
   printf '  %-14s %8s KB\n' "$prog" "$kb"
 done
+
+printf '\n'
+if [ "$FAILED" = 0 ]; then
+  echo "sim: all assertions passed"
+else
+  echo "sim: $FAILED FAILED"
+fi
+exit "$FAILED"

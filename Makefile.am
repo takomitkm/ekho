@@ -22,6 +22,7 @@ include_HEADERS = \
 	src/ekho_impl.h \
 	src/text_normalize.h \
 	src/streaming.h \
+	src/http_server.h \
 	src/alsa_backend.h
 
 libekho_a_SOURCES = \
@@ -42,6 +43,7 @@ libekho_a_SOURCES = \
 	src/symbol_array.cpp \
 	src/text_normalize.cpp \
 	src/streaming.cpp \
+	src/http_server.cpp \
 	src/alsa_backend.cpp
 
 libekho_a_CPPFLAGS = \
@@ -69,7 +71,7 @@ LIBEKHO_LIB = \
 	-lm \
 	-lpthread
 
-bin_PROGRAMS = ekho ekho-stream
+bin_PROGRAMS = ekho ekho-stream ekho-server
 
 ekho_SOURCES = src/ekho.cpp
 ekho_CPPFLAGS = -I$(srcdir)/src @SNDFILE_CFLAGS@ @ESPEAK_NG_CFLAGS@ @SONIC_CFLAGS@ @CURL_CFLAGS@
@@ -82,6 +84,14 @@ ekho_stream_SOURCES = src/ekho_stream_main.cpp
 ekho_stream_CPPFLAGS = -I$(srcdir)/src @SNDFILE_CFLAGS@ @ESPEAK_NG_CFLAGS@ @SONIC_CFLAGS@
 ekho_stream_CXXFLAGS = $(AM_CXXFLAGS) $(PTHREAD_CFLAGS)
 ekho_stream_LDADD = $(LIBEKHO_LIB) @SNDFILE_LIBS@ @ESPEAK_NG_LIBS@ $(PTHREAD_LIBS)
+
+# Streaming HTTP server: the replacement for the private one-shot TCP protocol
+# in server.cpp. Feeds the request body to a StreamingSession as it arrives and
+# returns chunked PCM.
+ekho_server_SOURCES = src/ekho_server_main.cpp
+ekho_server_CPPFLAGS = -I$(srcdir)/src @SNDFILE_CFLAGS@ @ESPEAK_NG_CFLAGS@ @SONIC_CFLAGS@
+ekho_server_CXXFLAGS = $(AM_CXXFLAGS) $(PTHREAD_CFLAGS)
+ekho_server_LDADD = $(LIBEKHO_LIB) @SNDFILE_LIBS@ @ESPEAK_NG_LIBS@ $(PTHREAD_LIBS)
 
 noinst_PROGRAMS = test_ekho
 test_ekho_SOURCES = src/test_ekho.cpp

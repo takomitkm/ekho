@@ -147,6 +147,7 @@ StreamingSession::StreamingSession(Ekho* engine, size_t ringFrames)
       ring_(ringFrames),
       segmented_(true),
       normalize_(true),
+      sealed_(false),
       ended_(false),
       stopped_(false),
       minTailChars_(6),
@@ -234,7 +235,7 @@ int StreamingSession::append(const std::string& text, bool normalize) {
   long long t0 = nowUs();
 
   pthread_mutex_lock(&stateMutex_);
-  if (stopped_ || ended_) {
+  if (stopped_ || sealed_ || ended_) {
     pthread_mutex_unlock(&stateMutex_);
     return 0;
   }
@@ -304,11 +305,16 @@ int StreamingSession::append(const std::string& text, bool normalize) {
 
 int StreamingSession::flush() {
   pthread_mutex_lock(&stateMutex_);
-  if (ended_ || stopped_) {
+  if (ended_ || sealed_ || stopped_) {
     pthread_mutex_unlock(&stateMutex_);
     return 0;
   }
-  ended_ = true;
+  // Stop accepting new text now, but do not publish ended_ until the tail has
+  // actually been synthesised: read() and finished() read "ended_ with an empty
+  // ring" as end-of-stream, so a consumer already parked in read() would
+  // otherwise return 0 the moment it woke and the final segment would be
+  // produced into a ring with no reader.
+  sealed_ = true;
   pthread_mutex_unlock(&stateMutex_);
 
   int made = 0;
@@ -322,6 +328,19 @@ int StreamingSession::flush() {
     made += synthSegment(buffer_);
     buffer_.clear();
   }
+
+  // Release the tail the resampler is still holding, so it belongs to *this*
+  // stream rather than appearing at the front of the next one. Without this,
+  // two identical requests produce two different waveforms: see the note on
+  // Ekho::drainAudio().
+  if (!stopped_) {
+    engine_->drainAudio(&StreamingSession::synthTrampoline, this);
+  }
+
+  pthread_mutex_lock(&stateMutex_);
+  ended_ = true;
+  pthread_mutex_unlock(&stateMutex_);
+
   pthread_cond_broadcast(&dataCond_);
   return made;
 }
