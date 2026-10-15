@@ -95,7 +95,16 @@ class Dict {
   const char* mVoiceFileType;  // "wav" or "gsm"
   map<string, PhoneticSymbol> mWordSymbolMap;
   SF_INFO mSfinfo;
-  DictItem mDictItemArray[65536] = {};
+  // No `= {}` here, deliberately. DictItem has a user-provided default
+  // constructor, so an empty initialiser list is value-initialisation, which for
+  // such a type just calls that constructor -- exactly what plain
+  // default-initialisation does. It changes nothing about the object, but it does
+  // change what the compiler has to emit: 65536 explicit initialisers instead of
+  // 65536 constructor calls, and with DictItem made trivial to check, 40 MB of
+  // object code rather than 3.8 MB. On the Arm 10.3 toolchain's 32-bit host
+  // cc1plus anything above -O0 then dies silently with no diagnostic at all,
+  // which is how this was found. See wiki/md/技术文档/实时伪tts.
+  DictItem mDictItemArray[65536];
 
   // map code to PhoneticSymbol
   // for Mandarin and Cantonese

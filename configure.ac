@@ -23,6 +23,30 @@ AC_PROG_INSTALL
 AC_PROG_MKDIR_P
 AM_PROG_AR
 AC_PROG_RANLIB
+
+# ---------------------------------------------------------------------------
+# Language standard
+# ------------------
+# src/libekho.cpp includes <filesystem> unconditionally, so C++17 is a
+# requirement -- but nothing ever said so. That was invisible on the machine
+# this was developed on, because gcc 11 and later default to gnu++17, and
+# immediately fatal on the Arm 10.3 toolchain, whose gcc 10.3 defaults to
+# gnu++14 and stops at "'filesystem' has not been declared". Ask for the
+# standard explicitly, and refuse to configure if the compiler cannot do it.
+AC_LANG_PUSH([C++])
+AC_MSG_CHECKING([whether $CXX can compile the C++17 <filesystem> header])
+ax_save_CXXFLAGS="$CXXFLAGS"
+CXXFLAGS="$CXXFLAGS -std=gnu++17"
+AC_COMPILE_IFELSE(
+  [AC_LANG_PROGRAM([[#include <filesystem>
+namespace ax_fs = std::filesystem;]],
+                   [[return 0;]])],
+  [AC_MSG_RESULT([yes])],
+  [CXXFLAGS="$ax_save_CXXFLAGS"
+   AC_MSG_RESULT([no])
+   AC_MSG_ERROR([a C++17 compiler is required: src/libekho.cpp uses <filesystem>])])
+AC_LANG_POP([C++])
+
 LT_INIT([disable-shared])
 PKG_PROG_PKG_CONFIG
 
