@@ -162,22 +162,38 @@ std::string GetCurrentWorkingDir( void ) {
  * 5. set to EKHO_DATA_PATH (like /usr/local/share/ekho-data)
  */
 string Dict::getDefaultDataPath(void) {
-  const char *path = getenv("EKHO_DATA_PATH");
-  if (!path) {
-    if (isDir(path)) {
-      // ok
-    } else if (isDir("ekho-data")) {
-      path = "ekho-data";
-    } else if (isDir("../ekho-data")) {
-      path = "../ekho-data";
-    } else if (isDir("/usr/local/share/ekho-data")) {
-      path = "/usr/local/share/ekho-data";
-    } else if (isDir("/usr/share/ekho-data")) {
-      path = "/usr/share/ekho-data";
-    } else if (isDir("/sdcard/ekho/ekho-data")) {
-      path = "/sdcard/ekho/ekho-data";
-    } else {
-      path = "";
+  // Upstream read `const char *path = getenv(...)` and then called
+  // isDir(path) inside `if (!path)`, i.e. passed the NULL it had just
+  // tested for straight into a function that does stat()/opendir() on it.
+  // Undefined behaviour on every run where the variable was unset.
+  const char *env = getenv("EKHO_DATA_PATH");
+  if (env != nullptr && *env != '\0') {
+    if (isDir(env)) {
+      return string(env);
+    }
+    if (mDebug) {
+      cerr << "EKHO_DATA_PATH=\"" << env << "\" is not a directory; ignoring it"
+           << endl;
+    }
+  }
+
+  // Compiled-in default first, then the usual locations.
+  static const char *kCandidates[] = {
+#ifdef EKHO_DATA_PATH
+      EKHO_DATA_PATH,
+#endif
+      "ekho-data",
+      "../ekho-data",
+      "/usr/local/share/ekho-data",
+      "/usr/share/ekho-data",
+      "/opt/ekho/share/ekho-data",
+  };
+
+  const char *path = "";
+  for (const char *c : kCandidates) {
+    if (isDir(c)) {
+      path = c;
+      break;
     }
   }
 

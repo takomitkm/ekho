@@ -61,9 +61,22 @@ int EkhoImpl::synth2(string text, SynthCallback* callback, void* userdata) {
     cerr << "speaking lang(" << mDict.getLanguage() << "): '" << text << "'" << endl;
   }
 
+  // Initialise espeak if this is the first synthesis. Upstream only ever did
+  // this from speechDaemon(), the background thread behind speak() and
+  // blockSpeak(), so a caller using Ekho::synth4() left espeak uninitialised:
+  // espeak_SetVoiceByName() then returned EE_NOT_FOUND (2) and English was
+  // synthesised with whatever default espeak happened to have. Idempotent.
+  initEnglish();
+
   if (!userdata) {
     userdata = this;
   }
+
+  // Record the caller's context for the espeak leg. espeak's synth callback has
+  // no userdata parameter of its own, so without this the PCM espeak produces
+  // is handed back to Ekho::synthCallback() tagged with the EkhoImpl rather
+  // than with whatever the caller passed to synth4().
+  Ekho::synthUserdata = userdata;
 
   //this->isStopped = false;
   this->isPaused = false;

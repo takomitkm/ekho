@@ -49,8 +49,16 @@ struct CutPoint {
 // A boundary is a sentence terminator or a comma-like separator that is not
 // nested inside brackets.  Numbers are skipped wholesale so a cut can never
 // land inside "12.5V".  Returns offset == 0 when there is no usable boundary.
+//
+// forceAtMax: when the buffer is longer than maxCutBytes and still has no
+// boundary, cut at maxCutBytes anyway (backed off to the nearest safe spot
+// inside the last 25% of that window).  A streaming front end that will not cut
+// produces one enormous burst of audio, which overflows any bounded ring and
+// makes playback stutter; capping the segment is what keeps the consumer ahead
+// of the producer.
 CutPoint lastSafeCut(const std::string& buf, size_t minKeepBytes = 0,
-                     size_t maxCutBytes = static_cast<size_t>(-1));
+                     size_t maxCutBytes = static_cast<size_t>(-1),
+                     bool forceAtMax = false);
 
 // True when `text` ends on a boundary strong enough to flush without waiting
 // for more input.

@@ -800,20 +800,27 @@ int EkhoImpl::stop(void) {
 
 void EkhoImpl::setSpeed(int tempo_delta) {
   int baseDelta = 0;
-  //if (!Ekho::emotiVoiceEnabled || !Ekho::zhttsEnabled) { // EmotiVoice是正常速度，不需要调整
-    // nomralize voice's tempo
-    if (mDict.getLanguage() == MANDARIN && mDict.mSfinfo.frames > 0) {
-      baseDelta = (int)round(mDict.mSfinfo.frames * 2 * 44100 * 100 / mDict.mSfinfo.samplerate / 20362) - 100;
-      if (EkhoImpl::mDebug) {
-        cerr << "mDict.mSfinfo.frames=" << mDict.mSfinfo.frames << ", samplerate=" << mDict.mSfinfo.samplerate << endl;
-      }
-
-      // Changing tempo will add noise, we'd better don't do it.
-      if (baseDelta < 10 && baseDelta > -10) {
-        baseDelta = 0;
-      }
+  // Tempo normalisation for the Chinese voice packs. This is NOT the same
+  // quantity as espeak's RATE and must not be fed to it: baseDelta is a tempo
+  // multiplier applied by the resampler downstream (setTempo(139) means
+  // "play 2.39x faster"), whereas espeakRATE is words per minute.
+  //
+  // It is load-bearing. The 44.1 kHz Mandarin pack is recorded slowly, and
+  // without this offset a sentence of 42 characters takes 20.3 s instead of the
+  // intended 8.96 s. Removing it looks like an obvious cleanup -- the constant
+  // 20362 has no provenance and `frames` is whatever voice file was loaded last
+  // -- but it changes the speaking rate of every Chinese sentence by 2.4x.
+  // English used to subtract this same value from espeakRATE, which is the bug
+  // that was fixed in setEnglishSpeed().
+  if (mDict.getLanguage() == MANDARIN && mDict.mSfinfo.frames > 0) {
+    baseDelta = (int)round(mDict.mSfinfo.frames * 2 * 44100 * 100 /
+                           mDict.mSfinfo.samplerate / 20362) - 100;
+    if (this->mDebug) {
+      cerr << "setSpeed baseDelta=" << baseDelta << " (frames="
+           << mDict.mSfinfo.frames << " samplerate="
+           << mDict.mSfinfo.samplerate << ")" << endl;
     }
-  //}
+  }
 
   if (baseDelta + tempo_delta != 0 || tempo_delta != this->tempoDelta) {
     if (this->mDebug) {

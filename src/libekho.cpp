@@ -421,6 +421,7 @@ short* Ekho::synth3(string text, int& samples) {
 
 // for Android
 SynthCallback* Ekho::synth4Callback = nullptr;
+void* Ekho::synthUserdata = nullptr;
 EkhoImpl* Ekho::impl = nullptr;
 int Ekho::postProcess(short* pcm, int frames, void* arg, OverlapType type) {
   EkhoImpl* pEkho = Ekho::impl;

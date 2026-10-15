@@ -34,13 +34,25 @@ inline size_t utf8Len(unsigned char c) {
   return (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
 }
 
-bool matches(const char* set, const std::string& s, size_t at, size_t len) {
-  for (size_t i = 0; i < len; i++) {
-    for (const char* p = set; *p; p++) {
-      if (s.compare(at + i, 1, std::string(1, *p)) == 0) return true;
-    }
+// If `s` at `at` begins with a character from `set`, returns that character's
+// byte length; otherwise 0.
+//
+// `set` is a concatenation of whole UTF-8 characters (see kSentenceEnd and
+// friends below), so it must be walked a character at a time. The earlier
+// version compared single bytes of `s` against single bytes of `set`, which
+// made the continuation byte 0x80 -- present inside virtually every CJK
+// character -- match the second byte of "。" (E3 80 82). Text then looked full
+// of sentence terminators and the cuts landed in the middle of characters,
+// reaching the front end as invalid UTF-8.
+size_t matchLen(const char* set, const std::string& s, size_t at) {
+  if (at >= s.size()) return 0;
+  for (const char* p = set; *p;) {
+    size_t l = utf8Len(static_cast<unsigned char>(*p));
+    if (l == 0) l = 1;
+    if (at + l <= s.size() && memcmp(s.data() + at, p, l) == 0) return l;
+    p += l;
   }
-  return false;
+  return 0;
 }
 
 // CJK numeral glyphs, kept as explicit UTF-8 escapes so the file stays pure
@@ -132,7 +144,7 @@ const UnitEntry kUnitsTable[] = {
 size_t unitLength(const std::string& s, size_t at) {
   for (const UnitEntry& e : kUnitsTable) {
     size_t n = std::strlen(e.ascii);
-    if (s.compare(at, n, e.ascii) == 0) return n;
+    if (at + n <= s.size() && s.compare(at, n, e.ascii) == 0) return n;
   }
   return 0;
 }
@@ -140,7 +152,7 @@ size_t unitLength(const std::string& s, size_t at) {
 std::string lookupUnit(const std::string& s, size_t at) {
   for (const UnitEntry& e : kUnitsTable) {
     size_t n = std::strlen(e.ascii);
-    if (s.compare(at, n, e.ascii) == 0) return e.spoken;
+    if (at + n <= s.size() && s.compare(at, n, e.ascii) == 0) return e.spoken;
   }
   return std::string();
 }
@@ -210,7 +222,7 @@ std::string normalizeText(const std::string& in, const NormalizeOptions& opt) {
 }
 
 CutPoint lastSafeCut(const std::string& buf, size_t minKeepBytes,
-                     size_t maxCutBytes) {
+                     size_t maxCutBytes, bool forceAtMax) {
   CutPoint r;
   if (buf.empty()) return r;
 
@@ -224,11 +236,19 @@ CutPoint lastSafeCut(const std::string& buf, size_t minKeepBytes,
   for (size_t i = 0; i < limit; i++) {
     unsigned char c = static_cast<unsigned char>(buf[i]);
 
-    if (matches(kOpenBracket, buf, i, 1)) { depth++; continue; }
-    if (matches(kCloseBracket, buf, i, 1)) { if (depth > 0) depth--; continue; }
+    size_t ob = matchLen(kOpenBracket, buf, i);
+    if (ob) {
+      depth++;
+      i += ob - 1;
+      continue;
+    }
+    size_t cb = matchLen(kCloseBracket, buf, i);
+    if (cb) {
+      if (depth > 0) depth--;
+      i += cb - 1;
+      continue;
+    }
     if (depth != 0) continue;
-
-    size_t w = utf8Len(c);
 
     if (isAsciiDigit(c)) {
       // Skip the whole numeric run so a cut cannot land inside "12.5V".
@@ -241,32 +261,71 @@ CutPoint lastSafeCut(const std::string& buf, size_t minKeepBytes,
       continue;
     }
 
-    if (matches(kSentenceEnd, buf, i, w) || matches(kClauseSep, buf, i, w)) {
+    size_t se = matchLen(kSentenceEnd, buf, i);
+    size_t cs = se ? 0 : matchLen(kClauseSep, buf, i);
+    size_t w = se ? se : cs;
+    if (w) {
       cuts.push_back(i + w);
       i += w - 1;
       continue;
     }
   }
 
-  if (cuts.empty()) return r;
-  for (auto it = cuts.rbegin(); it != cuts.rend(); ++it) {
-    if (*it <= minKeepBytes) break;
-    r.offset = *it;
-    r.tailBytes = buf.size() - *it;
-    return r;
+  if (!cuts.empty()) {
+    for (auto it = cuts.rbegin(); it != cuts.rend(); ++it) {
+      if (*it <= minKeepBytes) break;
+      r.offset = *it;
+      r.tailBytes = buf.size() - *it;
+      return r;
+    }
   }
+
+  if (!forceAtMax) return r;
+
+  // No boundary in range. Cut at the cap, but make sure the offset is a real
+  // character boundary and does not sit inside a number.
+  size_t at = limit;
+  if (at > buf.size()) at = buf.size();
+  if (at <= minKeepBytes) return r;
+
+  // `at` is a boundary when buf[at] starts a character, i.e. is not a
+  // continuation byte. Testing buf[at - 1] instead -- as an earlier revision
+  // did -- walks back to just *after* a lead byte, which splits the character
+  // into a lone lead byte plus orphaned continuations.
+  while (at > 0 && at < buf.size() &&
+         (static_cast<unsigned char>(buf[at]) & 0xC0) == 0x80) {
+    at--;
+  }
+
+  // step forward past any number we may have landed inside
+  size_t j = at;
+  while (j < buf.size() &&
+         (isAsciiDigit(buf[j]) || buf[j] == '.' || buf[j] == ',')) {
+    j++;
+  }
+  if (j > at) at = j;
+  // Stepping over the number may have landed mid-character again.
+  while (at > 0 && at < buf.size() &&
+         (static_cast<unsigned char>(buf[at]) & 0xC0) == 0x80) {
+    at--;
+  }
+
+  if (at == 0) return r;
+  r.offset = at;
+  r.tailBytes = buf.size() - at;
   return r;
 }
 
 bool isFlushable(const std::string& text, size_t minTailChars) {
   for (size_t i = 0; i < text.size(); i++) {
-    unsigned char c = static_cast<unsigned char>(text[i]);
-    size_t len = utf8Len(c);
-    if (matches(kSentenceEnd, text, i, len)) return true;
-    if (matches(kClauseSep, text, i, len)) {
-      if (charCount(text, i + len, text.size()) >= minTailChars) return true;
+    size_t se = matchLen(kSentenceEnd, text, i);
+    if (se) return true;
+    size_t cs = matchLen(kClauseSep, text, i);
+    if (cs) {
+      if (charCount(text, i + cs, text.size()) >= minTailChars) return true;
     }
-    i += len - 1;
+    size_t w = se ? se : cs;
+    if (w) i += w - 1;
   }
   return false;
 }

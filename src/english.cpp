@@ -24,6 +24,7 @@
 #include "ekho_dict.h"
 #include "ekho_impl.h"
 #include <math.h>
+#include <stdlib.h>
 
 #ifdef ENABLE_ESPEAK
 #include "espeak-ng/speak_lib.h"
@@ -35,9 +36,21 @@
 // build); espeak does not pass it per-callback, so record it once.
 static int gsEspeakSampleRate = 0;
 
+// The argument to hand back to Ekho::synthCallback(). espeak invokes its synth
+// callback with no userdata, so recover the one synth2() recorded for the call
+// in progress; fall back to the impl for paths that never go through synth2().
+// Passing EkhoImpl::gEkho unconditionally, as upstream did, meant a caller
+// driving Ekho::synth4() received its own callback with the engine as `arg`
+// and dereferenced it as its context.
+static void* espeakSynthArg() {
+  return Ekho::synthUserdata != nullptr
+             ? Ekho::synthUserdata
+             : static_cast<void*>(EkhoImpl::gEkho);
+}
+
 static int espeakSynthCallback(short* wav, int numsamples,
                                espeak_EVENT* events) {
-  return Ekho::synthCallback(wav, numsamples, EkhoImpl::gEkho, OVERLAP_NONE);
+  return Ekho::synthCallback(wav, numsamples, espeakSynthArg(), OVERLAP_NONE);
 }
 #endif
 
@@ -51,8 +64,22 @@ void EkhoImpl::initEnglish(void) {
 
 
 #ifdef ENABLE_ESPEAK
+  // Idempotent. speechDaemon() calls this once per speech session and synth2()
+  // now calls it on the callback path, which upstream never initialised at all:
+  // espeak_Initialize() only ever ran inside speechDaemon(), so a program
+  // driving Ekho::synth4() directly left espeak uninitialised and the first
+  // espeak_SetVoiceByName() returned EE_NOT_FOUND (2).
+  if (isEspeakInited) {
+    return;
+  }
+
   // espeak
   int samplerate = espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, nullptr, 1);
+  if (samplerate <= 0) {
+    cerr << "ekho: espeak_Initialize failed (returned " << samplerate
+         << "); English synthesis is unavailable" << endl;
+    return;
+  }
   gsEspeakSampleRate = samplerate;
   isEspeakInited = true;
   this->setEnglishSpeed(this->getEnglishSpeed());
@@ -77,29 +104,64 @@ void EkhoImpl::setEnglishSpeed(int delta) {
     return;
   }
 
-  int baseDelta = 0;
-  if (!Ekho::emotiVoiceEnabled && !Ekho::zhttsEnabled && !Ekho::piperEnglishEnabled) { // EmotiVoice是正常速度，不需要调整
-    baseDelta = (int)round(mDict.mSfinfo.frames * 2 * 44100 * 100 / mDict.mSfinfo.samplerate / 20362) - 100;
+  // espeak RATE is words per minute and must stay positive.
+  //
+  // Upstream computed the Chinese tempo normalisation (the same number
+  // setSpeed() feeds to setTempo()) and SUBTRACTED it from espeak's rate:
+  //
+  //     espeakRATE = 175 * (100 + delta - baseDelta) / 100
+  //
+  // That mixes units. baseDelta is a tempo multiplier applied by the resampler
+  // downstream -- setTempo(139) means "play 2.39x faster" -- whereas espeakRATE
+  // is words per minute. With the bundled packs baseDelta is 139, so the
+  // expression evaluated to 175 * (100 - 139) / 100 = -68 wpm, and espeak
+  // received a negative rate.
+  //
+  // What the original was reaching for is that English should be sped up by the
+  // same factor as Chinese, which is a multiplication:
+  //
+  //     espeakRATE = 175 * (100 + delta) / 100 * (100 + baseDelta) / 100
+  //
+  // English now runs at its own default rate. EKHO_ESPEAK_TEMPO_MATCH=1 turns
+  // the multiplicative match on. Whatever the path, the value handed to espeak
+  // is clamped into the range espeak documents.
+  const int kRateDefault = 175;
+  const int kRateMin = 80;
+  const int kRateMax = 450;
 
-    // Changing tempo will add noise, we'd better don't do it.
-    if (baseDelta < 10 && baseDelta > -10) {
-      baseDelta = 0;
-    }
+  int tempoMatch = 0;
+  const char *opt = getenv("EKHO_ESPEAK_TEMPO_MATCH");
+  if (opt != nullptr && *opt != '\0' && atoi(opt) != 0 &&
+      mDict.getLanguage() == MANDARIN && mDict.mSfinfo.frames > 0) {
+    tempoMatch = (int)round(mDict.mSfinfo.frames * 2 * 44100 * 100 /
+                            mDict.mSfinfo.samplerate / 20362) - 100;
   }
 
   if (EkhoImpl::mDebug) {
     cerr << "setEnglishSpeed espeakRATE default: " << espeak_GetParameter(espeakRATE, 0) << endl;
     cerr << "setEnglishSpeed espeakRATE current: " << espeak_GetParameter(espeakRATE, 1) << endl;
-    cerr << "setEnglishSpeed baseDelta: " << baseDelta << endl;
+    cerr << "setEnglishSpeed tempoMatch: " << tempoMatch << endl;
     cerr << "zhttsEnabled: " << Ekho::zhttsEnabled << endl;
   }
 
   if (delta >= -50 && delta <= 150) {
-    int ret = espeak_SetParameter(espeakRATE, 175 * (100 + delta - baseDelta) / 100, 0);
+    int rate = kRateDefault * (100 + delta) / 100;
+    if (tempoMatch != 0) {
+      rate = rate * (100 + tempoMatch) / 100;
+    }
+    if (rate < kRateMin) {
+      cerr << "espeak: RATE " << rate << " clamped up to " << kRateMin
+           << " (delta=" << delta << " tempoMatch=" << tempoMatch << ")" << endl;
+      rate = kRateMin;
+    } else if (rate > kRateMax) {
+      cerr << "espeak: RATE " << rate << " clamped down to " << kRateMax
+           << " (delta=" << delta << " tempoMatch=" << tempoMatch << ")" << endl;
+      rate = kRateMax;
+    }
+    int ret = espeak_SetParameter(espeakRATE, rate, 0);
     this->englishSpeedDelta = delta;
     if (EkhoImpl::mDebug) {
-      cerr << "english speed: " << 175 * (100 + delta) / 100
-           << ", result=" << ret << endl;
+      cerr << "english speed: " << rate << ", result=" << ret << endl;
     }
   }
 #endif
@@ -137,18 +199,39 @@ void EkhoImpl::synthWithEspeak(string text) {
   // Track the last voice actually selected. This must be mutable: as a
   // `static const char*` initialised to "en" it could never be updated, so a
   // later --english-voice would compare against the old value and be ignored.
-  static std::string current_voice;
-  if (current_voice != mEnglishVoice) {
+  // It is now a member, so two engines with different voices do not share it.
+  //
+  // espeak voice names are data-dependent: whether "en+f1" resolves depends on
+  // which voice files the installed espeak-ng ships. Failing used to be silent
+  // apart from one line on stderr, with no fallback, so English was read in
+  // whatever voice espeak happened to have selected.
+  if (mAppliedEnglishVoice != mEnglishVoice) {
+    static const char *const kFallbacks[] = {"en", "en-us", "english", nullptr};
     int ret = espeak_SetVoiceByName(mEnglishVoice);
-    if (ret != EE_OK) {
-      std::cerr << "Error setting eSpeak voice: " << mEnglishVoice << ". return " << ret << std::endl;
+    if (ret == EE_OK) {
+      mAppliedEnglishVoice = mEnglishVoice;
     } else {
-      current_voice = mEnglishVoice;
+      const char *used = nullptr;
+      for (const char *const *f = kFallbacks; *f != nullptr; f++) {
+        if (espeak_SetVoiceByName(*f) == EE_OK) {
+          used = *f;
+          break;
+        }
+      }
+      cerr << "ekho: eSpeak voice '" << mEnglishVoice
+           << "' rejected (code " << ret << ")";
+      if (used != nullptr) {
+        cerr << ", falling back to '" << used << "'";
+      } else {
+        cerr << " and no fallback voice is installed";
+      }
+      cerr << endl;
+      mAppliedEnglishVoice = (used != nullptr) ? used : "";
     }
   }
 
   if (!isStopped) {
-    Ekho::synthCallback(0, 0, gEkho, OVERLAP_NONE);  // flush pending pcm
+    Ekho::synthCallback(0, 0, espeakSynthArg(), OVERLAP_NONE);  // flush pending pcm
 
     // espeak synthesises at 22050 Hz. Tell the shared sonic stream that the
     // samples about to be written are at 22050 so it resamples them up to

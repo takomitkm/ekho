@@ -2,9 +2,15 @@
  * ekho-stream -- streaming driver and latency harness for ekho-linux.
  *
  * Feeds text to StreamingSession the way a real caller would (piece by piece,
- * optionally with a simulated inter-token delay) and reports first-chunk
- * latency, throughput and ring pressure using the same definitions as the
- * board-side TTS benchmark in tts-bench.
+ * optionally with a simulated inter-token delay) while a separate consumer
+ * thread drains the PCM ring, and reports first-chunk latency, throughput and
+ * ring pressure using the same definitions as the board-side TTS benchmark in
+ * tts-bench.
+ *
+ * The consumer has to be a real thread. Serialising "feed everything, then
+ * drain" measures the ring's overflow policy, not the engine: synthesis is
+ * synchronous inside append(), so the producer runs far ahead of a consumer
+ * that only starts afterwards.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  **************************************************************************/
@@ -14,7 +20,9 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <sndfile.h>
@@ -36,7 +44,8 @@ void usage(const char* argv0) {
           "      --chunk-delay=N  sleep N ms between pieces (simulates an LLM)\n"
           "      --no-segment     synthesise the whole buffer on every append\n"
           "      --no-normalize   skip text normalisation\n"
-          "      --ring-ms=N      PCM ring size in milliseconds (default 1000)\n"
+          "      --max-segment-chars=N  cap on chars synthesised per append (default 48, 0=uncapped)\n"          "      --ring-ms=N      PCM ring size in milliseconds (default 4000)\n"
+          "      --consumer-delay=N  consumer polls every N ms (default 1)\n"
           "      --samplerate=N   output sample rate (default: voice native)\n"
           "      --json           emit machine-readable stats on stdout\n",
           argv0);
@@ -72,10 +81,12 @@ int main(int argc, char* argv[]) {
   const char* outPath = nullptr;
   size_t chunk = 0;
   int chunkDelayMs = 0;
+  int consumerDelayMs = 1;
   bool segmented = true;
   bool doNormalize = true;
   bool json = false;
-  int ringMs = 1000;
+  int ringMs = 4000;
+  int maxSegChars = 0;   // 0 = derive from ring capacity
   int samplerate = 0;
 
   static struct option opts[] = {
@@ -87,7 +98,9 @@ int main(int argc, char* argv[]) {
       {"chunk-delay", required_argument, nullptr, 1002},
       {"no-segment", no_argument, nullptr, 1003},
       {"no-normalize", no_argument, nullptr, 1004},
+      {"max-segment-chars", required_argument, nullptr, 1009},
       {"ring-ms", required_argument, nullptr, 1005},
+      {"consumer-delay", required_argument, nullptr, 1008},
       {"samplerate", required_argument, nullptr, 1006},
       {"json", no_argument, nullptr, 1007},
       {"help", no_argument, nullptr, 'h'},
@@ -108,6 +121,8 @@ int main(int argc, char* argv[]) {
       case 1005: ringMs = atoi(optarg); break;
       case 1006: samplerate = atoi(optarg); break;
       case 1007: json = true; break;
+      case 1008: consumerDelayMs = atoi(optarg); break;
+      case 1009: maxSegChars = atoi(optarg); break;
       default: usage(argv[0]); return 2;
     }
   }
@@ -133,11 +148,18 @@ int main(int argc, char* argv[]) {
   int rate = samplerate > 0 ? samplerate : engine.getSampleRate();
   if (rate <= 0) rate = 16000;
   size_t ringFrames = (size_t)rate * ringMs / 1000;
-  if (ringFrames < 1024) ringFrames = 1024;
+  if (ringFrames < 4096) ringFrames = 4096;
 
   ekho::StreamingSession session(&engine, ringFrames);
   session.setSegmented(segmented);
   session.setNormalize(doNormalize);
+  // One synth4() burst must fit inside the ring, so the segment cap follows the
+  // ring: Mandarin is ~0.2 s per character.
+  if (maxSegChars <= 0) {
+    maxSegChars = (int)ekho::StreamingSession::deriveMaxSegmentChars(
+        ringFrames, rate);
+  }
+  session.setMaxSegmentChars((size_t)maxSegChars);
 
   if (chunk == 0) chunk = text.size();
   if (chunk == 0) chunk = 1;
@@ -157,6 +179,22 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  // Consumer: runs for the whole session, concurrently with the producer.
+  std::atomic<size_t> totalFrames(0);
+  std::vector<short> buf(8192);
+  std::thread consumer([&]() {
+    for (;;) {
+      int got = session.read(buf.data(), (int)buf.size(), 20);
+      if (got > 0) {
+        if (snd) sf_writef_short(snd, buf.data(), got);
+        totalFrames += (size_t)got;
+        continue;
+      }
+      if (session.finished()) break;
+      if (consumerDelayMs > 0) usleep((useconds_t)consumerDelayMs * 1000);
+    }
+  });
+
   const long long t0 = ekho::nowUs();
 
   // Producer: feed text in pieces.
@@ -165,29 +203,20 @@ int main(int argc, char* argv[]) {
     size_t n = (text.size() - pos < chunk) ? (text.size() - pos) : chunk;
     session.append(text.substr(pos, n), doNormalize);
     pos += n;
-    if (chunkDelayMs > 0 && pos < text.size()) usleep((useconds_t)chunkDelayMs * 1000);
+    if (chunkDelayMs > 0 && pos < text.size()) {
+      usleep((useconds_t)chunkDelayMs * 1000);
+    }
   }
   session.flush();
 
-  // Consumer: drain everything.
-  std::vector<short> buf(16384);
-  size_t totalFrames = 0;
-  for (;;) {
-    int got = session.read(buf.data(), (int)buf.size(), 200);
-    if (got <= 0) {
-      if (session.finished()) break;
-      continue;
-    }
-    if (snd) sf_writef_short(snd, buf.data(), got);
-    totalFrames += (size_t)got;
-  }
-
+  consumer.join();
   long long elapsed = ekho::nowUs() - t0;
-  ekho::StreamStats st = session.stats();
 
+  size_t frames = totalFrames;
+  ekho::StreamStats st = session.stats();
   if (snd) sf_close(snd);
 
-  double audioSec = (double)totalFrames / (double)rate;
+  double audioSec = (double)frames / (double)rate;
   double firstMs = (st.firstChunkUs < 0) ? -1.0 : (double)st.firstChunkUs / 1000.0;
   double genMs = (double)st.genUs / 1000.0;
   double rtf = (genMs > 0.0) ? (audioSec * 1000.0 / genMs) : 0.0;
@@ -196,29 +225,26 @@ int main(int argc, char* argv[]) {
     printf("{\"voice\":\"%s\",\"chars\":%zu,\"segments\":%zu,"
            "\"frames\":%zu,\"sample_rate\":%d,\"audio_s\":%.3f,"
            "\"first_ms\":%.3f,\"gen_ms\":%.3f,\"total_ms\":%.3f,"
-           "\"rtf\":%.3f,\"dropped_frames\":%zu,\"segmented\":%s,"
-           "\"normalized\":%s,\"out\":\"%s\"}\n",
-           voice, text.size(), st.segments, totalFrames, rate, audioSec, firstMs,
-           genMs, (double)elapsed / 1000.0, rtf, st.droppedFrames,
+           "\"rtf\":%.3f,\"dropped_frames\":%zu,\"ring_ms\":%d,"
+           "\"segmented\":%s,\"normalized\":%s,\"out\":\"%s\"}\n",
+           voice, text.size(), st.segments, frames, rate, audioSec, firstMs,
+           genMs, (double)elapsed / 1000.0, rtf, st.droppedFrames, ringMs,
            segmented ? "true" : "false", doNormalize ? "true" : "false",
            outPath ? outPath : "");
   } else {
-    printf("voice          : %s\n", voice);
+    printf("voice          : %s @ %d Hz\n", voice, rate);
     printf("chars in       : %zu\n", text.size());
     printf("segments       : %zu (%s)\n", st.segments,
            segmented ? "clause-boundary" : "whole-buffer");
-    printf("audio out      : %zu frames @ %d Hz = %.2f s\n", totalFrames, rate,
-           audioSec);
-    if (firstMs >= 0) {
-      printf("first chunk    : %.3f ms\n", firstMs);
-    } else {
-      printf("first chunk    : n/a (no cut produced audio; whole buffer ran at flush)\n");
-    }
+    printf("audio out      : %zu frames = %.2f s\n", frames, audioSec);
+    printf("first chunk    : %s\n",
+           firstMs < 0 ? "n/a" : "see below");
+    if (firstMs >= 0) printf("                %.3f ms\n", firstMs);
     printf("synthesis time : %.3f ms  (%.2fx realtime)\n", genMs, rtf);
     printf("wall clock     : %.3f ms\n", (double)elapsed / 1000.0);
-    printf("dropped frames : %zu\n", st.droppedFrames);
+    printf("ring           : %d ms capacity, %zu frames dropped\n", ringMs,
+           st.droppedFrames);
     if (outPath) printf("wrote          : %s\n", outPath);
   }
-
   return 0;
 }

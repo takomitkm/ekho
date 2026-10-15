@@ -25,6 +25,12 @@
 .dirstamp
 
 # voice packs are large and fetched separately
+#
+# The .voice blobs are concatenated sample audio: pinyin.voice is 122 MB for
+# the 44.1 kHz Mandarin pack, jyutping.voice 5.5 MB. The .index files are small
+# (tens of KB) and stay tracked, because they describe the offsets into the blob
+# and are what a reader needs in order to interpret it.
+/ekho-data/*.voice
 /ekho-data/pinyin/
 /ekho-data/jyutping/
 /ekho-data/alphabet/

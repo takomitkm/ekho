@@ -248,6 +248,11 @@ class EkhoImpl {
   int rateDelta;              // -50 .. 100 (%)
   const char* mEnglishVoice;  // voice_kal_diphone (default) or
                               // voice_cmu_us_slt_arctic_hts
+  // Last voice name successfully handed to espeak_SetVoiceByName(). Per
+  // instance, not file-static: a static was shared by every Ekho object, so a
+  // second engine with a different --english-voice compared against the first
+  // engine's value and kept the wrong voice.
+  std::string mAppliedEnglishVoice;
 
   bool isRecording;
   bool isPaused;

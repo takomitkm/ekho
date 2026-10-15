@@ -86,6 +86,10 @@ class Ekho {
     static void debug(bool flag = true);
     static SynthCallback* synthCallback; // callback for synth2
     static SynthCallback* synth4Callback;
+    // The `userdata` of the synth2() call currently in progress. espeak's own
+    // callback carries no userdata, so the espeak leg reads it back from here
+    // instead of substituting the EkhoImpl.
+    static void* synthUserdata;
     static EkhoImpl* impl;
     static bool emotiVoiceEnabled;
     static bool zhttsEnabled;
