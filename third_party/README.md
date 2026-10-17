@@ -42,9 +42,14 @@ statically:
 | libsonic | Apache-2.0 | GPL-compatible. |
 | alsa-lib | LGPL-2.1-or-later | Compiled against headers only; no ALSA code in the binary. |
 
-So a binary built from this tree is distributed under **GPL-2.0-or-later**, and
-handing one to somebody means handing them the corresponding source, the
-licence texts, and a note of what was changed (this repository is that source).
+So the combination is **GPL-3.0-or-later**, not GPL-2: espeak-ng and the files
+this fork adds (`src/alsa_backend.*`, `src/streaming.*`, `src/http_server.*`,
+`src/text_normalize.*`, `src/ekho_stream_main.cpp`, `src/ekho_server_main.cpp`)
+are GPL-3.0-or-later, and both licences are "or later", so the stricter one
+governs the binary. The ekho files inherited from upstream stay available under
+GPL-2.0-or-later as well. Handing somebody a binary means handing them the
+corresponding source, the licence texts, and a note of what was changed (this
+repository is that source).
 
 Full licence texts for the linked libraries are not duplicated here; they are in
 the upstream distributions and, for a built kit, under `share/doc/` next to the
