@@ -48,6 +48,8 @@ void usage(const char* argv0) {
           "      --ring-ms=N      PCM ring size in milliseconds (default 4000)\n"
           "      --consumer-delay=N  consumer polls every N ms (default 1)\n"
           "      --samplerate=N   output sample rate (default: voice native)\n"
+          "      --english-speed=N  percent on espeak's rate for English text\n"
+          "                       (default 0; the base is 140 wpm, or EKHO_ESPEAK_RATE)\n"
           "      --json           emit machine-readable stats on stdout\n",
           argv0);
 }
@@ -89,6 +91,7 @@ int main(int argc, char* argv[]) {
   int ringMs = 4000;
   int maxSegChars = 0;   // 0 = derive from ring capacity
   int samplerate = 0;
+  int englishSpeed = 0;
 
   static struct option opts[] = {
       {"file", required_argument, nullptr, 'f'},
@@ -103,6 +106,7 @@ int main(int argc, char* argv[]) {
       {"ring-ms", required_argument, nullptr, 1005},
       {"consumer-delay", required_argument, nullptr, 1008},
       {"samplerate", required_argument, nullptr, 1006},
+      {"english-speed", required_argument, nullptr, 1010},
       {"json", no_argument, nullptr, 1007},
       {"help", no_argument, nullptr, 'h'},
       {nullptr, 0, nullptr, 0}};
@@ -124,6 +128,7 @@ int main(int argc, char* argv[]) {
       case 1007: json = true; break;
       case 1008: consumerDelayMs = atoi(optarg); break;
       case 1009: maxSegChars = atoi(optarg); break;
+      case 1010: englishSpeed = atoi(optarg); break;
       default: usage(argv[0]); return 2;
     }
   }
@@ -145,6 +150,8 @@ int main(int argc, char* argv[]) {
     return 3;
   }
   if (samplerate > 0) engine.setSampleRate(samplerate);
+  // English and Chinese rates are independent; this only moves espeak's rate.
+  engine.setEnglishSpeed(englishSpeed);
 
   int rate = samplerate > 0 ? samplerate : engine.getSampleRate();
   if (rate <= 0) rate = 16000;

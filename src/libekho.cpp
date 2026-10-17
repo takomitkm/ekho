@@ -372,7 +372,9 @@ void Ekho::setEnglishSpeed(int delta) {
   return this->m_pImpl->setEnglishSpeed(delta);
 }
 
-int Ekho::getEnglishSpeed() { return this->m_pImpl->getSpeed(); }
+// Was this->m_pImpl->getSpeed(), i.e. the Chinese tempo delta, which is a
+// different quantity in different units.
+int Ekho::getEnglishSpeed() { return this->m_pImpl->getEnglishSpeed(); }
 
 void Ekho::setPitch(int pitch_delta) { this->m_pImpl->setPitch(pitch_delta); }
 

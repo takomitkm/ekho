@@ -25,7 +25,8 @@
  *   GET  /voices    voices this build ships data for.
  *
  * Query parameters on /tts: voice=NAME, speed=DELTA, pitch=DELTA, volume=DELTA
- * (the same deltas `ekho -s/-p/-V` take), and fmt=wav as an alias for wait=1.
+ * (the same deltas `ekho -s/-p/-V` take), english_speed=DELTA (espeak's rate for
+ * English text, see --english-speed), and fmt=wav as an alias for wait=1.
  *
  * Concurrency
  * -----------
@@ -50,6 +51,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <climits>
+
 #include <string>
 #include <thread>
 #include <vector>
@@ -63,6 +66,11 @@
 namespace {
 
 ekho::HttpServer* gServer = nullptr;
+
+// "No English speed pushed at the engine yet", and what a voice change resets
+// currentEnglishSpeed to, so the next request always applies its own value.
+// Any other value is a delta a client actually asked for.
+const int kUnsetDelta = INT_MIN;
 
 void onSignal(int) {
   if (gServer != nullptr) gServer->stop();
@@ -80,6 +88,8 @@ void usage(const char* argv0) {
           "      --no-save        stream only, keep no server-side copy\n"
           "      --max-segment-chars=N  cap on chars per synth4() burst (0=derive)\n"
           "      --samplerate=N   output sample rate (default: voice native)\n"
+          "      --english-speed=N  espeak rate delta for English text, percent\n"
+          "                       (default 0 = 140 wpm; EKHO_ESPEAK_RATE moves the base)\n"
           "      --verbose        log each request\n"
           "  -h, --help           this text\n",
           argv0);
@@ -149,6 +159,11 @@ struct ServerState {
   int currentSpeed = 0;
   int currentPitch = 0;
   int currentVolume = 0;
+  // --english-speed: what a request that omits english_speed gets. English is
+  // not on the Chinese tempo path, so its omitted value is the configured
+  // default rather than zero.
+  int defaultEnglishSpeed = 0;
+  int currentEnglishSpeed = kUnsetDelta;  // what the engine has applied now
   size_t ringFrames = 0;
   int rate = 0;
   int ringMs = 4000;
@@ -209,6 +224,7 @@ bool handleTts(ekho::HttpConnection& conn, const ekho::HttpRequest& req,
   std::string speed = req.param("speed");
   std::string pitch = req.param("pitch");
   std::string volume = req.param("volume");
+  std::string englishSpeed = req.param("english_speed");
 
   const VoiceAlias* alias = lookupVoice(requested);
   if (alias == nullptr) {
@@ -242,6 +258,9 @@ bool handleTts(ekho::HttpConnection& conn, const ekho::HttpRequest& req,
     st->currentDisplay = alias->display;
     // Deltas are absolute, not sticky, and a voice change resets them.
     st->currentSpeed = st->currentPitch = st->currentVolume = 0;
+    // setVoice() does not touch espeak's rate, but the contract above says a
+    // switch resets the deltas, so make the next request push its own value.
+    st->currentEnglishSpeed = kUnsetDelta;
   }
 
   // Apply this request's deltas. They are absolute: a request that omits one
@@ -261,6 +280,15 @@ bool handleTts(ekho::HttpConnection& conn, const ekho::HttpRequest& req,
   if (wantVolume != st->currentVolume) {
     st->engine->setVolume(wantVolume);
     st->currentVolume = wantVolume;
+  }
+  // English speed is independent of the Chinese tempo above, and a request that
+  // omits it gets the server default rather than zero -- otherwise
+  // --english-speed could never take effect.
+  int wantEnglishSpeed = englishSpeed.empty() ? st->defaultEnglishSpeed
+                                              : atoi(englishSpeed.c_str());
+  if (wantEnglishSpeed != st->currentEnglishSpeed) {
+    st->engine->setEnglishSpeed(wantEnglishSpeed);
+    st->currentEnglishSpeed = wantEnglishSpeed;
   }
 
   // Read the first block of the request body before announcing the response.
@@ -468,6 +496,7 @@ int main(int argc, char* argv[]) {
   int ringMs = 4000;
   int maxSegChars = 0;
   int samplerate = 0;
+  int englishSpeed = 0;
   bool verbose = false;
   bool saveFiles = true;
 
@@ -480,6 +509,7 @@ int main(int argc, char* argv[]) {
       {"no-save", no_argument, nullptr, 1003},
       {"max-segment-chars", required_argument, nullptr, 1004},
       {"samplerate", required_argument, nullptr, 1005},
+      {"english-speed", required_argument, nullptr, 1007},
       {"verbose", no_argument, nullptr, 1006},
       {"help", no_argument, nullptr, 'h'},
       {nullptr, 0, nullptr, 0}};
@@ -497,6 +527,7 @@ int main(int argc, char* argv[]) {
       case 1004: maxSegChars = atoi(optarg); break;
       case 1005: samplerate = atoi(optarg); break;
       case 1006: verbose = true; break;
+      case 1007: englishSpeed = atoi(optarg); break;
       default: usage(argv[0]); return 2;
     }
   }
@@ -511,6 +542,7 @@ int main(int argc, char* argv[]) {
   st.ringMs = ringMs;
   st.verbose = verbose;
   st.saveFiles = saveFiles;
+  st.defaultEnglishSpeed = englishSpeed;
 
   const VoiceAlias* defaultAlias = lookupVoice(voice);
   if (defaultAlias == nullptr) {
@@ -525,6 +557,11 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "ekho-server: cannot load voice '%s'\n", voice);
     return 3;
   }
+  // English and Chinese rates are independent; this only moves espeak's rate.
+  // The library remembers it even before espeak is initialised (which happens on
+  // the first synthesis), so the value survives the voice probe below.
+  engine.setEnglishSpeed(englishSpeed);
+  st.currentEnglishSpeed = englishSpeed;
 
   // Ask the library which of the other voices are installed, rather than
   // assuming. The shipped voice pack is not the same everywhere -- it has full

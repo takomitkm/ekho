@@ -220,8 +220,11 @@ class Ekho {
     void setSpeed(int tempo_delta);
     int getSpeed(void);
 
-    // setEnglishSpeed should be called after setVoice
-    void setEnglishSpeed(int delta); /* -50 .. 150 */
+    // English speaking rate, independent of setSpeed()/setTempo(): a percentage
+    // delta on espeak's rate (base 140 wpm, or EKHO_ESPEAK_RATE). Negative is
+    // slower. Out-of-range results are clamped into espeak's 80..450 wpm and
+    // reported on stderr. The delta survives until espeak is initialised.
+    void setEnglishSpeed(int delta);
     int getEnglishSpeed(void);
 
     /* Set pitch delta

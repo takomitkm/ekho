@@ -159,8 +159,16 @@ class EkhoImpl {
    */
   void setSpeed(int tempo_delta);
   int getSpeed(void) { return this->tempoDelta + 30 /* @TODO: 30 is for bd voice?? */; }
-  void setEnglishSpeed(int delta); /* -50 .. 150 */
-  int getEnglishSpeed(void) { return this->englishSpeedDelta - 20 /* @TODO: slower for bd voice?? */; }
+  /* Set the English speaking rate.
+   * Parameter:
+   *    delta -- percentage on the rate in effect (see english.cpp for the base,
+   *             which EKHO_ESPEAK_RATE can set; the default is 140 wpm)
+   * The resulting rate is clamped into espeak's documented 80 .. 450 wpm and a
+   * clamp is reported on stderr. The delta is remembered even if espeak has not
+   * been initialised yet; initEnglish() applies it. */
+  void setEnglishSpeed(int delta);
+  void applyEnglishSpeed(void);   /* push the current delta at espeak */
+  int getEnglishSpeed(void) { return this->englishSpeedDelta; }
 
   /* Set pitch delta
    * Parameter:
@@ -246,7 +254,7 @@ class EkhoImpl {
 
   bool mPcmCache;
   int tempoDelta;             // -50 .. 100 (%)
-  int englishSpeedDelta;      // -50 .. 150 (%)
+  int englishSpeedDelta;      // percent on the English base rate; see english.cpp
   int pitchDelta;             // -100 .. 100 (%)
   int volumeDelta;            // -100 .. 100 (%)
   int rateDelta;              // -50 .. 100 (%)
