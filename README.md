@@ -33,6 +33,11 @@ Added on top of upstream:
   `audio/L16` out, plus `POST /tts?wait=1`, `GET /health`, `GET /voices`.
   Default port 2046. It needs no privileges: bind above 1024, data path from the
   environment, output path from `--out-dir`.
+* **English speed is a real knob**, independent of the Chinese tempo: `--english-speed`
+  in all three binaries (`ekho-server`: as the default, plus `english_speed=DELTA` per
+  request), and `EKHO_ESPEAK_RATE=WPM` to move the base rate without a rebuild. Before
+  this it did nothing: the value was set before espeak existed, then overwritten by a
+  delta 20 points off, and out-of-range values were dropped without a word.
 
 ### Known issues
 

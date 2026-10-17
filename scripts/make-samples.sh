@@ -35,7 +35,8 @@ Z1="$OUT/01-zh-mandarin"      # numbers, money, units, polyphones, erhua, mixed 
 Y="$OUT/02-yue-cantonese"     # the jyutping pack; 16 kHz, so these files are half the size
 E="$OUT/03-en-english"        # espeak-ng through a Chinese voice (see header)
 S="$OUT/04-streaming"         # one-shot vs segmented vs "as an LLM emits it"
-mkdir -p "$Z1" "$Y" "$E" "$S"
+L="$OUT/05-en-speed"          # the same sentence at six espeak rates, to pick a default
+mkdir -p "$Z1" "$Y" "$E" "$S" "$L"
 
 # text, wav, voice, the text
 gen() {
@@ -81,6 +82,22 @@ gen "$E/15-pangram-and-twister.txt" "$E/15-pangram-and-twister.wav" Mandarin \
     'The quick brown fox jumps over the lazy dog. Peter Piper picked a peck of pickled peppers.'
 gen "$E/16-english-numbers.txt"     "$E/16-english-numbers.wav"     Mandarin \
     'The meeting is on October 16th, 2026, at 9:30 in the morning. The total is one thousand two hundred eighty dollars and fifty cents.'
+
+echo "=== 05-en-speed (the same sentence at six espeak rates) ==="
+# English is read by espeak-ng, and its rate is independent of -s, which only
+# moves the Chinese tempo. This fork used to land on 140 wpm by accident -- an
+# explicit --english-speed was dropped before espeak existed, and initEnglish()
+# then applied a delta 20 points off what anyone asked for. It is explicit now:
+# EKHO_ESPEAK_RATE picks the base (words per minute, 80..450) and
+# --english-speed is a percentage on top. This group is how the default gets
+# chosen, by ear rather than by argument.
+HARVARD='The birch canoe slid on the smooth planks. Glue the sheet to the dark blue background. It is easy to tell the depth of a well.'
+printf '%s' "$HARVARD" > "$L/text.txt"
+for wpm in 80 100 120 140 160 175; do
+    out="$L/en-$(printf '%03d' "$wpm")-wpm.wav"
+    EKHO_ESPEAK_RATE=$wpm "$EKHO" -v Mandarin -f "$L/text.txt" -o "$out" >/dev/null 2>&1
+    printf '  %-34s %s (%d wpm)\n' "$(basename "$out")" "$( [ -s "$out" ] && echo ok || echo FAILED)" "$wpm"
+done
 
 echo "=== 04-streaming (same text, three ways) ==="
 LONG='市气象台今天上午发布消息，未来三天本市以晴到多云为主，最高气温22度，最低气温9度，早晚温差较大，请市民注意增减衣物。另外，明天早高峰期间，地铁一号线和四号线将缩短发车间隔。'
