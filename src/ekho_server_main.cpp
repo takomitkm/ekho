@@ -89,7 +89,7 @@ void usage(const char* argv0) {
           "      --max-segment-chars=N  cap on chars per synth4() burst (0=derive)\n"
           "      --samplerate=N   output sample rate (default: voice native)\n"
           "      --english-speed=N  espeak rate delta for English text, percent\n"
-          "                       (default 0 = 140 wpm; EKHO_ESPEAK_RATE moves the base)\n"
+          "                       (default 0 = 100 wpm; EKHO_ESPEAK_RATE moves the base)\n"
           "      --verbose        log each request\n"
           "  -h, --help           this text\n",
           argv0);

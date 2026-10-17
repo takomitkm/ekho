@@ -73,7 +73,7 @@ Syntax: ekho [option] [text]\n\
         Set eSpeak voice name. For example, set 'en-us+f3' if you want a female voice.\n\
 --english-speed=SPEED\n\
         Set English delta speed. Value range from -50 to 150 (percent).\n\
-        -50 is 80 wpm, espeak's floor; 0 is the base rate, 140 wpm, and\n\
+        -50 is 80 wpm, espeak's floor; 0 is the base rate, 100 wpm, and\n\
         EKHO_ESPEAK_RATE moves that base (80..450). Independent of -s, which\n\
         only moves the Chinese tempo.\n\
 --samplerate=SAMPLE_RATE\n\

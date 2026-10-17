@@ -49,7 +49,7 @@ void usage(const char* argv0) {
           "      --consumer-delay=N  consumer polls every N ms (default 1)\n"
           "      --samplerate=N   output sample rate (default: voice native)\n"
           "      --english-speed=N  percent on espeak's rate for English text\n"
-          "                       (default 0; the base is 140 wpm, or EKHO_ESPEAK_RATE)\n"
+          "                       (default 0; the base is 100 wpm, or EKHO_ESPEAK_RATE)\n"
           "      --json           emit machine-readable stats on stdout\n",
           argv0);
 }

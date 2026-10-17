@@ -162,7 +162,7 @@ class EkhoImpl {
   /* Set the English speaking rate.
    * Parameter:
    *    delta -- percentage on the rate in effect (see english.cpp for the base,
-   *             which EKHO_ESPEAK_RATE can set; the default is 140 wpm)
+   *             which EKHO_ESPEAK_RATE can set; the default is 100 wpm)
    * The resulting rate is clamped into espeak's documented 80 .. 450 wpm and a
    * clamp is reported on stderr. The delta is remembered even if espeak has not
    * been initialised yet; initEnglish() applies it. */

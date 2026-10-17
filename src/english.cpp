@@ -42,12 +42,13 @@ static const int kEspeakRateMax = 450;
 
 // The rate espeak speaks at when --english-speed asks for no change.
 //
-// espeak's own default is 175 wpm, which is brisk for English read by an engine
-// whose Chinese runs at conversational speed. This tree used to land on 140 by
-// accident: initEnglish() applied getEnglishSpeed(), which subtracted 20
+// espeak's own default is 175 wpm, which is brisk. This tree used to land on
+// 140 by accident: initEnglish() applied getEnglishSpeed(), which subtracted 20
 // (upstream's "@TODO: slower for bd voice??"), so an explicit --english-speed
-// was discarded and an unset one silently became 140. 140 is what the listening
-// samples were made with, so it is kept as the deliberate default.
+// was discarded and an unset one silently became 140. When the plumbing was
+// fixed, that accidental 140 was kept at first -- no surprise change while
+// fixing a bug -- and then the rate was picked from rendered samples by ear
+// (2026-10-17): 100 wpm is the default.
 //
 // Move it without a rebuild:
 //
@@ -60,7 +61,7 @@ static int espeakRateBase() {
   if (cached > 0) {
     return cached;
   }
-  const int kDefault = 140;
+  const int kDefault = 100;
   int wpm = kDefault;
   const char* env = getenv("EKHO_ESPEAK_RATE");
   if (env != nullptr && *env != '\0') {

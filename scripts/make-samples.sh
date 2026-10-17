@@ -89,8 +89,8 @@ echo "=== 05-en-speed (the same sentence at six espeak rates) ==="
 # explicit --english-speed was dropped before espeak existed, and initEnglish()
 # then applied a delta 20 points off what anyone asked for. It is explicit now:
 # EKHO_ESPEAK_RATE picks the base (words per minute, 80..450) and
-# --english-speed is a percentage on top. This group is how the default gets
-# chosen, by ear rather than by argument.
+# --english-speed is a percentage on top. This group is how the default was
+# chosen, by ear rather than by argument: 100 wpm (2026-10-17).
 HARVARD='The birch canoe slid on the smooth planks. Glue the sheet to the dark blue background. It is easy to tell the depth of a well.'
 printf '%s' "$HARVARD" > "$L/text.txt"
 for wpm in 80 100 120 140 160 175; do
