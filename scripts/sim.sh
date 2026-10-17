@@ -25,6 +25,9 @@ export EKHO_DATA_PATH="$SRC/ekho-data"
 cat > "$SIM/zh_long.txt" <<'EOF'
 你好，这是在学校机器上用 MinGW 编译的 Ekho 十一点零版本测试。语音合成正常，这是普通话。
 EOF
+cat > "$SIM/zh_bytes.txt" <<'EOF'
+你好，这是在学校机器上编译的测试文本。语音合成正常，这是普通话。
+EOF
 cat > "$SIM/zh_stream.txt" <<'EOF'
 系统启动完成。第一项，电源状态正常。第二项，存储设备已挂载，剩余空间百分之八十七。第三项，网络链路已建立，延迟二十三毫秒。现在开始播放欢迎词。任务结束。
 EOF
@@ -86,11 +89,17 @@ hr "1b. byte-chunked input must not lose characters"
 # partial sequence over to the next call. Chunk sizes 1/2/3/4/6/7 all land
 # inside a 3-byte CJK character at different phases, and every one of them must
 # produce exactly the same audio.
+#
+# CJK-only on purpose. Run against the mixed zh_long.txt this used to pass, but
+# only because the old default voice (en+f1) happened to be byte-reproducible:
+# espeak-ng's output for text with ASCII in it varies run to run for the
+# current default voice (en-us+f3), so comparing bytes across two invocations
+# would be measuring espeak, not the hold-back. Section 7 has the same caveat.
 printf '  %-8s %10s  %s\n' chunk_B bytes md5
 ref11=""
 chunkbad=0
 for c in 1 2 3 4 6 7; do
-  "$OUT/ekho-stream" -v Mandarin -f "$SIM/zh_long.txt" --chunk "$c" --json \
+  "$OUT/ekho-stream" -v Mandarin -f "$SIM/zh_bytes.txt" --chunk "$c" --json \
     -o "$SIM/k_c$c.wav" >/dev/null 2>&1
   b=$(stat -c%s "$SIM/k_c$c.wav")
   h=$(md5of "$SIM/k_c$c.wav")
@@ -209,7 +218,10 @@ fi
 # with the same sentence gets five different lengths and five different
 # waveforms, and re-initialising espeak between calls does not help, because it
 # draws on a continuing internal pseudo-random sequence while building prosody.
-# Chinese never touches espeak and is exact (section 2); text containing ASCII
+# (Observed 2026-10-17: with the current default voice en-us+f3, no two
+# invocations of the same command produce the same bytes; with the old default
+# en+f1 they did, which is why some earlier byte comparisons passed.) Chinese
+# never touches espeak and is exact (section 2); text containing ASCII
 # inherits espeak's variance.
 
 hr "8. peak RSS"

@@ -40,7 +40,10 @@ Added on top of upstream:
   in all three binaries (`ekho-server`: as the default, plus `english_speed=DELTA` per
   request), and `EKHO_ESPEAK_RATE=WPM` to move the base rate without a rebuild. Before
   this it did nothing: the value was set before espeak existed, then overwritten by a
-  delta 20 points off, and out-of-range values were dropped without a word.
+  delta 20 points off, and out-of-range values were dropped without a word. The base
+  rate is 100 wpm and the espeak voice is `en-us+f3`, both picked by ear on 2026-10-17
+  (see `scripts/make-samples.sh` groups 05 and 06); `--english-voice` overrides the
+  voice for one run and `EKHO_ESPEAK_VOICE` moves the default without a rebuild.
 
 ### Known issues
 

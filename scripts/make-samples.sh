@@ -36,7 +36,8 @@ Y="$OUT/02-yue-cantonese"     # the jyutping pack; 16 kHz, so these files are ha
 E="$OUT/03-en-english"        # espeak-ng through a Chinese voice (see header)
 S="$OUT/04-streaming"         # one-shot vs segmented vs "as an LLM emits it"
 L="$OUT/05-en-speed"          # the same sentence at six espeak rates, to pick a default
-mkdir -p "$Z1" "$Y" "$E" "$S" "$L"
+T="$OUT/06-en-tone"           # 100 wpm: six voices, plus four nearby rates
+mkdir -p "$Z1" "$Y" "$E" "$S" "$L" "$T"
 
 # text, wav, voice, the text
 gen() {
@@ -76,6 +77,8 @@ gen "$Y/13-cantonese-question.txt"  "$Y/13-cantonese-question.wav"  Cantonese \
     '你食咗饭未啊？我仲未食，等你一齐。'
 
 echo "=== 03-en-english (44.1 kHz, Mandarin voice on ASCII text) ==="
+# At the compiled defaults: 100 wpm and the eSpeak voice 'en-us+f3' (both
+# picked by ear 2026-10-17; see groups 05 and 06).
 gen "$E/14-harvard-sentences.txt"   "$E/14-harvard-sentences.wav"   Mandarin \
     'The birch canoe slid on the smooth planks. Glue the sheet to the dark blue background. It is easy to tell the depth of a well.'
 gen "$E/15-pangram-and-twister.txt" "$E/15-pangram-and-twister.wav" Mandarin \
@@ -96,6 +99,27 @@ printf '%s' "$HARVARD" > "$L/text.txt"
 for wpm in 80 100 120 140 160 175; do
     out="$L/en-$(printf '%03d' "$wpm")-wpm.wav"
     EKHO_ESPEAK_RATE=$wpm "$EKHO" -v Mandarin -f "$L/text.txt" -o "$out" >/dev/null 2>&1
+    printf '  %-34s %s (%d wpm)\n' "$(basename "$out")" "$( [ -s "$out" ] && echo ok || echo FAILED)" "$wpm"
+done
+
+echo "=== 06-en-tone (six voices at 100 wpm + four nearby rates) ==="
+# Round two of the same choice. At a slow rate eSpeak stretches every segment
+# instead of resampling, so a slower voice is not simply "the same voice,
+# slower" -- the timbre smears. The voice is the lever that does not touch the
+# rate; EKHO_ESPEAK_RATE the other way round. The winner (2026-10-17) is now
+# the compiled default: 'en-us+f3' at 100 wpm (see libekho_impl.cpp).
+printf '%s' "$HARVARD" > "$T/text.txt"
+i=0
+for voice in en+f1 en en+f3 en-us en-us+f3 en-us+m3; do
+    i=$((i+1))
+    out="$T/$(printf '%02d' "$i")-voice-$voice.wav"
+    "$EKHO" -v Mandarin -f "$T/text.txt" -o "$out" --english-voice="$voice" >/dev/null 2>&1
+    printf '  %-34s %s (voice %s)\n' "$(basename "$out")" "$( [ -s "$out" ] && echo ok || echo FAILED)" "$voice"
+done
+for wpm in 110 120 130 140; do
+    i=$((i+1))
+    out="$T/$(printf '%02d' "$i")-rate-$wpm.wav"
+    EKHO_ESPEAK_RATE=$wpm "$EKHO" -v Mandarin -f "$T/text.txt" -o "$out" >/dev/null 2>&1
     printf '  %-34s %s (%d wpm)\n' "$(basename "$out")" "$( [ -s "$out" ] && echo ok || echo FAILED)" "$wpm"
 done
 

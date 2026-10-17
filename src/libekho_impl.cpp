@@ -69,7 +69,16 @@ int EkhoImpl::init(void) {
   mSpeechQueueMutex = PTHREAD_MUTEX_INITIALIZER;
   mSpeechQueueCond = PTHREAD_COND_INITIALIZER;
 #ifdef ENABLE_ESPEAK
-  mEnglishVoice = "en+f1";
+  // eSpeak voice for ASCII text. Picked by ear 2026-10-17 at 100 wpm from a
+  // six-voice comparison (desktop samples 06-en-tone): the inherited default
+  // 'en+f1' smears badly at slow rates, 'en-us+f3' stays intelligible there.
+  // --english-voice overrides this per run; EKHO_ESPEAK_VOICE moves the base
+  // without a rebuild.
+  mEnglishVoice = "en-us+f3";
+  const char *voiceEnv = getenv("EKHO_ESPEAK_VOICE");
+  if (voiceEnv != nullptr && *voiceEnv != '\0') {
+    mEnglishVoice = voiceEnv;
+  }
 #endif
 
   this->audio = new Audio();

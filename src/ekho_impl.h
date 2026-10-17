@@ -258,8 +258,8 @@ class EkhoImpl {
   int pitchDelta;             // -100 .. 100 (%)
   int volumeDelta;            // -100 .. 100 (%)
   int rateDelta;              // -50 .. 100 (%)
-  const char* mEnglishVoice;  // voice_kal_diphone (default) or
-                              // voice_cmu_us_slt_arctic_hts
+  const char* mEnglishVoice;  // eSpeak voice name for ASCII text; the default
+                              // is set in libekho_impl.cpp ('en-us+f3')
   // Last voice name successfully handed to espeak_SetVoiceByName(). Per
   // instance, not file-static: a static was shared by every Ekho object, so a
   // second engine with a different --english-voice compared against the first
