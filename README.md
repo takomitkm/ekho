@@ -13,8 +13,11 @@ In order to create your own voice, please refere to <a href='http://eguidedog.ne
 ## This fork: Linux only
 
 This tree is a Linux-only fork of the above. Windows build products are gone, the
-build is autotools only, and a few things were added or fixed. What it needs and
-what it gives you:
+build is autotools only, and a few things were added or fixed. It is published at
+<https://github.com/takomitkm/ekho> -- itself a fork of
+<https://github.com/hgneng/ekho>, pushed there as a fresh snapshot (the two
+histories share no common ancestor; the fork's `master` is this tree). What it
+needs and what it gives you:
 
     scripts/build-native.sh      # configure + make into out/ (ekho, ekho-stream, ekho-server)
     scripts/sim.sh               # correctness and streaming assertions; non-zero exit on failure
