@@ -17,7 +17,14 @@
 set -u
 
 KIT=$XROOT/kit-ekho
-TB=/c/Users/YiZhidi/ekho-linux-7a93762.tar.gz
+# Source tarball, produced on the dev machine with
+#   git archive --format=tar.gz -o ekho-linux-<sha>.tar.gz <sha>     (no --prefix)
+# and scp'd into the guest's home. The commit in the file name is what the
+# kit's licence file and MANIFEST will carry, so keep the two in step; the
+# archive has no .git, which is why the commit is read from the name.
+TB=${1:-/c/Users/YiZhidi/ekho-linux-98e25cd.tar.gz}
+COMMIT=$(basename "$TB" | sed -n 's/^ekho-linux-\([0-9a-f]\{7,\}\)\.tar\.gz$/\1/p')
+[ -n "$COMMIT" ] || die "cannot read a commit out of $(basename "$TB")"
 SRC=$XROOT/src/ekho-linux
 BOARD=/c/Users/YiZhidi/board-libs.txt
 SHIM=$XROOT/kit-glibc-compat/include/ekho-cross-stat.h
@@ -310,7 +317,7 @@ done
     echo "under GPL-2.0-or-later as well. Either way the corresponding source has"
     echo "to travel with the binary. The source is:"
     echo
-    echo "  S:\\apps\\llm\\agentwork\\ekho-linux        (git, commit $(cd "$SRC" && git rev-parse --short HEAD 2>/dev/null || echo 7a93762))"
+    echo "  S:\\apps\\llm\\agentwork\\ekho-linux        (git, commit $COMMIT)"
     echo "  S:\\apps\\llm\\agentwork\\crossekho         (the x-*.sh scripts that fetch, build, link and gate)"
     echo "  upstream tarballs used to build the kits live in the build host's"
     echo "  $XROOT/dl/ directory."
@@ -324,7 +331,7 @@ done
 echo "  $(ls -1 "$KIT/share/doc" | tr '\n' ' ')"
 
 kit_finish "$KIT" ekho 11.0-linux.1 \
-  "ekho-linux fork commit 7a93762, cross-linked against kit-sonic + kit-sndfile + kit-espeak" \
+  "ekho-linux fork commit $COMMIT, cross-linked against kit-sonic + kit-sndfile + kit-espeak" \
   "bin/{ekho,ekho-stream,ekho-server} (stripped) + share/ekho-data (voice pack) + share/espeak-ng-data + run.sh + share/doc (licences and source pointer)"
 
 echo
