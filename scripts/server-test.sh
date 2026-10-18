@@ -17,7 +17,9 @@ PORT=${PORT:-12046}
 HOST=127.0.0.1
 BASE="http://$HOST:$PORT"
 
-export EKHO_DATA_PATH="$SRC/ekho-data"
+# Overridable so a trimmed copy of the data can be regression-tested against
+# the same assertions; the default is unchanged.
+export EKHO_DATA_PATH="${EKHO_DATA_PATH:-$SRC/ekho-data}"
 mkdir -p "$SIM"
 rm -f "$SIM"/*
 

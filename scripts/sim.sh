@@ -20,7 +20,9 @@ OUT=${OUT:-$SRC/out}
 SIM=${SIM:-/tmp/ekho-sim}
 mkdir -p "$SIM"
 
-export EKHO_DATA_PATH="$SRC/ekho-data"
+# Overridable so a trimmed copy of the data can be regression-tested against
+# the same assertions; the default is unchanged.
+export EKHO_DATA_PATH="${EKHO_DATA_PATH:-$SRC/ekho-data}"
 
 cat > "$SIM/zh_long.txt" <<'EOF'
 你好，这是在学校机器上用 MinGW 编译的 Ekho 十一点零版本测试。语音合成正常，这是普通话。

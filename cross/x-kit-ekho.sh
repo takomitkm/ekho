@@ -241,6 +241,17 @@ if [ -d "$XROOT/kit-espeak/share/espeak-ng-data" ]; then
     cp -RLf "$XROOT/kit-espeak/share/espeak-ng-data" "$KIT/share/espeak-ng-data"
     echo "  espeak data: $(find "$KIT/share/espeak-ng-data" -type f | wc -l) files (snapshot of kit-espeak's, so kit-ekho stands alone)"
 fi
+# Trim to Mandarin + Cantonese + English. Both sources above are left whole;
+# only the kit's copies are cut. See cross/x-trim-data.sh for why each kept
+# file is read at runtime and each dropped one is not.
+if [ -f "$SRC/cross/x-trim-data.sh" ]; then
+    echo "  --- trim to Mandarin + Cantonese + English ---"
+    bash "$SRC/cross/x-trim-data.sh" "$KIT/share/ekho-data" "$KIT/share/espeak-ng-data" \
+        | sed 's/^/    /'
+else
+    echo "  trim script missing: $SRC/cross/x-trim-data.sh"
+    echo "  (kit will carry the full data pack)"
+fi
 echo "  --- how espeak-ng 1.50 resolves an unset data path ---"
 grep -rn 'ESPEAK_DATA_PATH' "$XROOT/src/espeak-ng-1.50+dfsg/src/libespeak-ng" 2>/dev/null | head -5 | sed 's/^/    /'
 
