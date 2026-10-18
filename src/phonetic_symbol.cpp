@@ -23,12 +23,62 @@
 #include <sndfile.h>
 #include <string.h>
 #include <stdio.h>
+#include <vector>
 #include "audio.h"
 #include "ekho_dict.h"
 
 using namespace std;
 namespace ekho {
   bool PhoneticSymbol::debug = false;
+
+  // Memory-backed source for libsndfile. libsndfile has no "open from
+  // memory" call -- sf_open_virtual() is the documented way to decode a
+  // buffer in RAM, and it exists in every version we link (1.0.28 in the
+  // cross kit, 1.2.2 in the simulation environment).
+  namespace {
+    struct MemSource {
+      const char *data;
+      sf_count_t size;
+      sf_count_t pos;
+    };
+
+    sf_count_t memGetFilelen(void *user) {
+      return static_cast<MemSource *>(user)->size;
+    }
+
+    sf_count_t memSeek(sf_count_t offset, int whence, void *user) {
+      MemSource *m = static_cast<MemSource *>(user);
+      sf_count_t np;
+      switch (whence) {
+        case SEEK_SET: np = offset; break;
+        case SEEK_CUR: np = m->pos + offset; break;
+        case SEEK_END: np = m->size + offset; break;
+        default: return -1;
+      }
+      if (np < 0 || np > m->size) return -1;
+      m->pos = np;
+      return np;
+    }
+
+    sf_count_t memRead(void *ptr, sf_count_t count, void *user) {
+      MemSource *m = static_cast<MemSource *>(user);
+      sf_count_t avail = m->size - m->pos;
+      if (count > avail) count = avail;
+      if (count <= 0) return 0;
+      memcpy(ptr, m->data + m->pos, (size_t)count);
+      m->pos += count;
+      return count;
+    }
+
+    // Read-only source: libsndfile checks that all five callbacks are
+    // non-NULL even in SFM_READ mode, so write must exist -- it just never
+    // gets called, and "wrote nothing" is the honest answer anyway.
+    sf_count_t memWrite(const void *, sf_count_t, void *) { return 0; }
+
+    sf_count_t memTell(void *user) {
+      return static_cast<MemSource *>(user)->pos;
+    }
+  }  // namespace
 
   const char* PhoneticSymbol::getPcm(FILE *file, int &size) {
     if (PhoneticSymbol::debug) {
@@ -54,39 +104,49 @@ namespace ekho {
       }
     }
 
-    if (!mPcm && file && fseek(file, offset, SEEK_SET) == 0) {
-      string tmpFilePath = Audio::genTempFilename();
-      FILE *gsmfile = fopen(tmpFilePath.c_str(), "wb+");
-
-      if (!gsmfile) {
-        cerr << "Fail to create temparary file." << endl;
+    // The .voice file is a plain concatenation of per-symbol sound files
+    // (see Dict::makeVoiceFile): each chunk at [offset, offset+bytes) is a
+    // complete WAV/GSM file with its own header, and the .index carries the
+    // offsets. Upstream decoded such a chunk by copying it to a temp file
+    // under /tmp and reopening that with libsndfile. The copy bought
+    // nothing -- libsndfile parses the very same bytes straight out of
+    // memory -- and cost four things on the target:
+    //   * a hidden "must have a writable /tmp" runtime dependency; on a
+    //     read-only rootfs every syllable decoded to silence;
+    //   * a predictable temp name (/tmp/ekho<N>, a per-process counter),
+    //     so two processes clobbered each other's half-written chunks;
+    //   * two leaked handles per symbol: neither the FILE* nor the SNDFILE
+    //     was ever closed, so a long session crawled toward RLIMIT_NOFILE;
+    //   * write+unlink on flash plus page-cache churn on first use of
+    //     every symbol.
+    // Read the chunk once into a heap buffer and decode it from memory.
+    if (!mPcm && file && bytes > 0 && fseek(file, offset, SEEK_SET) == 0) {
+      vector<char> chunk((size_t)bytes);
+      if (fread(chunk.data(), 1, (size_t)bytes, file) != (size_t)bytes) {
+        cerr << "PhoneticSymbol::getPcm: fail to read " << bytes
+             << " bytes at offset " << offset << " for symbol "
+             << this->symbol << endl;
         size = 0;
         return 0;
       }
-      
-      const int bufferSize = 128000;
-      char buffer[bufferSize];
-      int b = bytes;
-      while (b > 0) {
-        if (b <= bufferSize) {
-          fread(buffer, 1, b, file);
-          fwrite(buffer, 1, b, gsmfile);
-          b = 0;
-        } else {
-          b -= bufferSize;
-          fread(buffer, 1, bufferSize, file);
-          fwrite(buffer, 1, bufferSize, gsmfile);
-        }
-      }
 
-
-      rewind(gsmfile);
       SF_INFO sfinfo;
       memset(&sfinfo, 0, sizeof(SF_INFO));
-      int fd = fileno(gsmfile);
-      SNDFILE *sndfile = sf_open_fd(fd, SFM_READ, &sfinfo, 1);
+      MemSource src;
+      src.data = chunk.data();
+      src.size = (sf_count_t)bytes;
+      src.pos = 0;
+      SF_VIRTUAL_IO vio;
+      vio.get_filelen = memGetFilelen;
+      vio.seek = memSeek;
+      vio.read = memRead;
+      vio.write = memWrite;
+      vio.tell = memTell;
+      SNDFILE *sndfile = sf_open_virtual(&vio, SFM_READ, &sfinfo, &src);
       readSndfile(sndfile, sfinfo);
-      remove(tmpFilePath.c_str());
+      if (sndfile) {
+        sf_close(sndfile);
+      }
 
     }
 
