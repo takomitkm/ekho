@@ -42,7 +42,13 @@ kit_reset "$KIT"
 
 echo "--- fresh source tree ---"
 rm -rf "$SRC"; mkdir -p "$SRC"
-tar -xzf "$TB" -C "$SRC" || die "extract failed"
+# The dev machine's clock runs ~15 s ahead of the guest's, and git archive
+# stamps every file with the commit time, so a tarball made from a fresh
+# commit extracts as "time stamp is N s in the future". GNU tar reports that
+# on stderr and exits non-zero, which the `|| die` below used to read as a
+# failed extraction -- of an extraction that had in fact succeeded. Genuine
+# extraction failures are still fatal.
+tar --warning=no-timestamp -xzf "$TB" -C "$SRC" || die "extract failed"
 cd "$SRC" || exit 1
 echo "  $(find . -type f | wc -l) files"
 
