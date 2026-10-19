@@ -176,6 +176,13 @@ int sonicReadUnsignedCharFromStream(sonicStream stream, unsigned char* samples,
    has.  No extra delay will be added to the output, but flushing in the middle
    of words could introduce distortion. */
 int sonicFlushStream(sonicStream stream);
+/* Throw away everything the stream has processed so far without touching its
+   configuration (speed, pitch, rate, volume, quality, sample rate, channels).
+   A flushed stream is not a fresh one: the pitch and play-time history survive
+   the flush and change how the next input is rendered. Call this before reusing
+   a stream for unrelated audio to get exactly what a newly created stream would
+   output. */
+void sonicResetStream(sonicStream stream);
 /* Return the number of samples in the output buffer */
 int sonicSamplesAvailable(sonicStream stream);
 /* Get the speed of the stream. */

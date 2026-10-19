@@ -67,6 +67,7 @@ class Audio {
     void initProcessor();
     void initProcessor(int samplerate, int channels);
     void destroyProcessor();
+    void resetProcessor();
     int setPitch(int delta);
     void setPitchFloat(float factor);
     int setVolume(int delta);

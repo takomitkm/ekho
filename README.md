@@ -44,6 +44,25 @@ Added on top of upstream:
   rate is 100 wpm and the espeak voice is `en-us+f3`, both picked by ear on 2026-10-17
   (see `scripts/make-samples.sh` groups 05 and 06); `--english-voice` overrides the
   voice for one run and `EKHO_ESPEAK_VOICE` moves the default without a rebuild.
+* **The Mandarin pack is 8 kHz.** The tracked `ekho-data/pinyin.index` describes an
+  8 kHz version of the upstream 44.1 kHz pack, and `scripts/convert-voice.c` produces
+  the matching `pinyin.voice` from the upstream one (the repo keeps the 44.1 kHz pair
+  next to it as `*.44k` once converted). Ekho decodes each syllable chunk on first use
+  and keeps the PCM for the life of the process, so a session that touches every
+  syllable caches ~23 MB of PCM instead of ~125 MB: measured peak RSS 48 MB vs 117 MB
+  on a text that reaches every syllable in the dictionary (small sentences: 24.5 vs
+  25.3 MB). Plain 16-bit PCM is deliberate -- this change is about resident RAM, not
+  disk. One engine change goes with it: the syllable-join threshold scales with the
+  pack rate (`EkhoImpl::writeToSonicStream`); without that the resampler's 4 kHz
+  low-pass makes the joins walk further and the pack speaks ~11% fast. 44.1 kHz and
+  English behaviour are byte-identical, and speaking rate stays close to the 44.1 kHz
+  pack: over 11 ordinary sentences plus 7 listening texts the median length difference
+  is +0.2% and the worst ordinary case 3.5%. Sibilant-dense text is the exception --
+  a tongue twister comes out ~12% short at every threshold, because the low-pass
+  removes the waveform features the join walk keys on. The output sample rate follows
+  the pack, so `-o file.wav` now writes 8 kHz (a 4 kHz band) unless
+  `--samplerate=22050`/`44100` is passed; that flag also keeps espeak-ng's English at
+  its native bandwidth in mixed text.
 
 ### Known issues
 

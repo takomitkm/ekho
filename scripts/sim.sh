@@ -15,7 +15,7 @@
 # script exits non-zero if any assertion fails.
 set -u
 
-SRC=${SRC:-/mnt/s/apps/llm/agentwork/ekho-linux}
+SRC=${SRC:-/mnt/s/work/WCIS/repos/ekho-linux}
 OUT=${OUT:-$SRC/out}
 SIM=${SIM:-/tmp/ekho-sim}
 mkdir -p "$SIM"

@@ -36,6 +36,12 @@
 /ekho-data/alphabet/
 /ekho-data/piper/
 
+# Converted-pack backups: the fork's ekho-data/pinyin.* are the 8 kHz pack
+# (scripts/convert-voice.c); the upstream 44.1 kHz originals stay next to them
+# as *.44k for A/B listening and for re-deriving the conversion.
+/ekho-data/*.voice.*
+/ekho-data/*.index.*
+
 # scratch
 *.wav.tmp
 /_work/

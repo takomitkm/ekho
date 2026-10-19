@@ -248,6 +248,7 @@ class EkhoImpl {
   int init(void);
   int initPcm(void);
   int initStream(void);
+  void resetSynthesisState(void);
   void initEnglish(void);
   void closeStream(void);
   int outputSpeech(string text);
@@ -285,6 +286,13 @@ class EkhoImpl {
   short* mPendingPcm = nullptr;
   int mPendingPcmFrames = 0;
   int mPendingFrames;
+
+  // The pending buffer is allocated one frame longer than mPendingPcmFrames.
+  // writeToSonicStream()'s overlap search is anchored at mPendingPcm[
+  // mPendingFrames] -- one past the last valid frame -- and tests that sample
+  // first to decide whether to walk backwards into the previous audio at all.
+  // The extra frame exists only so that read stays inside the allocation; what
+  // is *in* it decides real output, see resetSynthesisState().
 
   bool isSpeechThreadInited;
   pthread_t speechThread;

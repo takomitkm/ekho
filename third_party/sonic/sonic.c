@@ -717,6 +717,37 @@ int sonicFlushStream(sonicStream stream) {
   return 1;
 }
 
+/* Throw away the processing history of the stream, keeping its configuration.
+   Flushing is not the same thing: sonicFlushStream() empties the input and
+   pitch buffers but leaves prevPeriod, numOutputSamples, the rate positions and
+   the play-time bookkeeping alone, so the first samples of the next run are
+   built from the state of the previous one. Feeding the same audio twice into a
+   flushed stream therefore does not produce the same output -- measurably a few
+   frames different, and audibly different phase. A freshly created stream has
+   all of these fields zero (sonicCreateStream() calloc()s the struct), so
+   clearing them makes the next run behave exactly like the first run of a new
+   stream. Speed, pitch, rate, volume, quality, sample rate and channels are
+   deliberately kept: those are configuration, not history. */
+void sonicResetStream(sonicStream stream) {
+  stream->numInputSamples = 0;
+  stream->numOutputSamples = 0;
+  stream->numPitchSamples = 0;
+  stream->inputPlayTime = 0.0f;
+  stream->timeError = 0.0f;
+  stream->oldRatePosition = 0;
+  stream->newRatePosition = 0;
+  stream->prevPeriod = 0;
+  stream->prevMinDiff = 0;
+  stream->remainingInputToCopy = 0;
+  memset(stream->inputBuffer, 0,
+         stream->inputBufferSize * sizeof(short) * stream->numChannels);
+  memset(stream->outputBuffer, 0,
+         stream->outputBufferSize * sizeof(short) * stream->numChannels);
+  memset(stream->pitchBuffer, 0,
+         stream->pitchBufferSize * sizeof(short) * stream->numChannels);
+  memset(stream->downSampleBuffer, 0, stream->maxRequired * sizeof(short));
+}
+
 /* Return the number of samples in the output buffer */
 int sonicSamplesAvailable(sonicStream stream) {
   return stream->numOutputSamples;

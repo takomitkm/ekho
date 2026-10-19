@@ -70,6 +70,7 @@ void Dict::init(void) {
   mVoiceFileType = nullptr;
 
   mFullPausePcmSize = 25000;
+  mPausePcmRate = 0; // no rate applied yet; buffers are the pristine alloc
   //memset(mDictItemArray, 0, sizeof(mDictItemArray));
   //mDictItemArray = {};
 
@@ -96,14 +97,27 @@ void Dict::init(void) {
 }
 
 void Dict::setPauseSampleRate(int samplerate) {
-  if (samplerate <= 0 || mSfinfo.samplerate == samplerate) {
+  if (samplerate <= 0 || samplerate == mPausePcmRate) {
     return;
   }
-  mSfinfo.samplerate = samplerate;
 
-  // 25000 frames was 1.56 s at 16 kHz. Keep the wall-clock duration constant.
-  int newSize = (int)((long long)mFullPausePcmSize * samplerate / 16000);
-  if (newSize <= 0 || newSize == mFullPausePcmSize) {
+  // The buffers are allocated in init() as 25000 bytes (12500 frames) and
+  // were never rescaled: the old guard compared against mSfinfo.samplerate,
+  // which is exactly what the caller passes, so this always early-returned
+  // and a full pause played 12500/rate seconds -- 283 ms at 44.1 kHz but
+  // 1.56 s at 8 kHz. Scale from the rate each language's buffers were tuned
+  // at (espeak English runs at 16 kHz, voice packs at 44.1 kHz) so the
+  // wall-clock pause length stays constant across pack rates and existing
+  // rates stay byte-identical. Always compute from the pristine 25000-byte
+  // base so repeated calls cannot compound.
+  int refRate = (mLanguage == ENGLISH) ? 16000 : 44100;
+  int newSize = (int)((long long)25000 * samplerate / refRate);
+  if (newSize <= 0) {
+    newSize = 1;
+  }
+  mPausePcmRate = samplerate;
+
+  if (newSize == mFullPausePcmSize) {
     return;
   }
   mFullPausePcmSize = newSize;

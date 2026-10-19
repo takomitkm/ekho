@@ -173,8 +173,11 @@ class Dict {
   inline PhoneticSymbol* getQuaterPause(void) { return mQuaterPause; };
   inline int getFullPauseSize(void) { return mFullPausePcmSize; };
   // Rescale the synthetic pause buffers to the voice pack's sample rate.
-  // They are allocated for 16 kHz (25000 frames = 1.56 s); at 44100 Hz that
-  // would be only 0.57 s, so every punctuation pause came out ~2.8x too short.
+  // The buffers are allocated in init() as 25000 bytes (12500 frames) and used
+  // to be never rescaled, so a full pause played 12500/rate seconds: 283 ms at
+  // 44.1 kHz but 1.56 s at 8 kHz. Scale from the rate each language's buffers
+  // were tuned at (espeak English runs at 16 kHz, voice packs at 44.1 kHz) so
+  // the wall-clock pause length stays constant across pack rates.
   void setPauseSampleRate(int samplerate);
 
   bool isPunctuationChar(int code, EkhoPuncType mode); 
@@ -210,6 +213,7 @@ class Dict {
 
   string mVoice;
   int mFullPausePcmSize;
+  int mPausePcmRate; // sample rate the pause buffers were last sized for
   Language mLanguage;
   PhoneticSymbol* mFullPause;
   PhoneticSymbol* mHalfPause;

@@ -10,7 +10,7 @@
 #   * malformed requests get an HTTP error rather than a hang or a kill
 set -u
 
-SRC=${SRC:-/mnt/s/apps/llm/agentwork/ekho-linux}
+SRC=${SRC:-/mnt/s/work/WCIS/repos/ekho-linux}
 OUT=${OUT:-$SRC/out}
 SIM=${SIM:-/tmp/ekho-server-test}
 PORT=${PORT:-12046}
@@ -81,9 +81,14 @@ hr "2. POST /tts?wait=1 vs the one-shot CLI"
 curl -s -X POST --data-binary "@$SIM/zh.txt" "$BASE/tts?wait=1" -o "$SIM/wait.wav"
 refb=$(stat -c%s "$SIM/ref.wav"); waitb=$(stat -c%s "$SIM/wait.wav")
 reff=$(( (refb - 44) / 2 )); waitf=$(( (waitb - 44) / 2 ))
-printf '  one-shot CLI  %9s B  %8.3f s\n  wait=1        %9s B  %8.3f s\n' \
-       "$refb" "$(awk -v f="$reff" 'BEGIN{printf "%.3f", f/44100}')" \
-       "$waitb" "$(awk -v f="$waitf" 'BEGIN{printf "%.3f", f/44100}')"
+# The voice pack decides the sample rate -- the converted Mandarin pack is
+# 8 kHz -- so take it out of the WAV header rather than assuming 44.1 kHz.
+wavrate() { od -An -tu4 -j 24 -N 4 "$1" | tr -d ' '; }
+refr=$(wavrate "$SIM/ref.wav"); waitr=$(wavrate "$SIM/wait.wav")
+printf '  one-shot CLI  %9s B  %8.3f s\n  wait=1        %9s B  %8.3f s\n  rate          %9s Hz\n' \
+       "$refb" "$(awk -v f="$reff" -v r="$refr" 'BEGIN{printf "%.3f", f/r}')" \
+       "$waitb" "$(awk -v f="$waitf" -v r="$waitr" 'BEGIN{printf "%.3f", f/r}')" \
+       "$refr"
 if awk -v a="$reff" -v b="$waitf" 'BEGIN{d=(a>b?a-b:b-a); exit !(d <= a*0.10)}'; then
   ok "duration within 10% of the one-shot CLI"
 else

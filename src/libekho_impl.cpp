@@ -204,15 +204,53 @@ int EkhoImpl::initStream(void) {
     if (need < PENDING_PCM_FRAMES) {
       need = PENDING_PCM_FRAMES;
     }
-    mPendingPcm = new short[need];
+    // One extra frame: the phantom the overlap search peeks at (see mPendingPcm
+    // in ekho_impl.h). mPendingPcmFrames stays the usable capacity.
+    mPendingPcm = new short[need + 1];
     mPendingPcmFrames = need;
-    memset(mPendingPcm, 0, need * sizeof(short));
+    memset(mPendingPcm, 0, (need + 1) * sizeof(short));
     mPendingFrames = 0;
   }
 
 
   return 0;
 }  // end of initStream
+
+/* Put the engine back into the state a freshly started process is in.
+
+   Two pieces of state survive a synthesis and otherwise make the next one
+   render differently, even for the same text and the same settings:
+
+   1. The join buffer. At the end of every synthesis the pending audio has been
+      flushed (synth2() ends with an OVERLAP_NONE write that empties it), so
+      mPendingFrames is 0, but the bytes are still there. writeToSonicStream()
+      reads mPendingPcm[mPendingFrames] *before* deciding whether to walk
+      backwards into the previous audio, and after a flush the frames past the
+      valid data hold whatever the previous synthesis left behind. A loud stale
+      sample stops the walk before it starts, a quiet one lets it run, purely
+      according to what was spoken before. Zeroing the buffer restores the state
+      initStream() leaves, which is what the walk has always effectively
+      assumed - a new process has a zeroed buffer.
+
+   2. The resampler. sonicFlushStream() empties its buffers but keeps the pitch
+      and play-time history (prevPeriod, numPitchSamples, oldRatePosition,
+      timeError, ...), so the same audio written to a flushed stream comes back
+      with a different phase, and a few frames different in length, than it does
+      out of a new stream. Audio::resetProcessor() clears that history.
+
+   Both are no-ops on the first synthesis of a process (fresh buffer, fresh
+   stream), so the first render is exactly what it always was; from then on
+   every synthesis renders like a first one. That is what makes the second
+   request for a text identical to the first in a live server, and it is what
+   scripts/server-test.sh sections 3 and 7 check. */
+void EkhoImpl::resetSynthesisState(void) {
+  if (mPendingPcm != nullptr) {
+    memset(mPendingPcm, 0, (mPendingPcmFrames + 1) * sizeof(short));
+  }
+  mPendingFrames = 0;
+
+  this->audio->resetProcessor();
+}
 
 void EkhoImpl::closeStream(void) {
   this->audio->destroyProcessor();
@@ -328,7 +366,40 @@ int EkhoImpl::writeToSonicStream(short* pcm, int frames, OverlapType type) {
     remainBufferFrames = mPendingPcmFrames;
   }
 
-  const int quiet_level = mOverlap; // 音量低于(quiet_level / 32767)的部分重叠
+  // 音量低于(quiet_level / 32767)的部分重叠
+  //
+  // Rate-gated overlap threshold for converted voice packs. The 44.1 kHz
+  // packs were tuned with quiet_level = mOverlap: the engine walks each
+  // chunk's quiet edges while samples stay below this threshold, and at
+  // 44.1 kHz the walk stops on the onset/offset transients (bursts,
+  // fricative tails) that still poke above it. An 8 kHz resample lowpasses
+  // exactly those away, so the same threshold walks further per join and the
+  // pack drifts from the 44.1 kHz timing. Scaling the threshold as
+  // (rate/44100)^p puts the stop points back.
+  //
+  // p was first fitted indirectly: solve-threshold.py put the mean-zero
+  // threshold at Q~1950 for the first-stage walks alone, and the engine was
+  // then measured at Q=2048 (net overlap +995 ms over 58 joins), Q=1878
+  // (-605 ms) and Q=1744 (-779 ms), which interpolated to Q~1925 -> p=0.442.
+  // Measuring the finished engine on a wider corpus is better than fitting
+  // parts of it: with 11 ordinary sentences plus the 7 listening texts
+  // rendered at both rates and only the threshold changed, Q=1925 left the
+  // ordinary sentences +0.28% long on average with a +6.46% worst case,
+  // while Q=2050 centres them (mean +0.06%, median +0.20%) and halves the
+  // worst case to 3.47%; texts within +/-1.5% go from 5/18 to 10/18. Q=2200
+  // (-0.93% mean, 5.10% worst) and above start to overshoot. Hence p=0.405,
+  // which is Q=2050 at 8 kHz. The residual spread is text-dependent: the
+  // tongue-twister in the listening set (四是四，十是十...) stays ~-12% at
+  // every threshold, because the walk reacts to the resampled waveform
+  // rather than to a level, so one global threshold cannot do better. The
+  // engine's second-stage q_level walks scale with quiet_level too, so the
+  // first-stage solver alone under-corrects. 44.1 kHz and English keep
+  // mOverlap exactly (byte-identical behaviour).
+  int quiet_level = mOverlap;
+  int voice_rate = mDict.mSfinfo.samplerate;
+  if (mDict.getLanguage() != ENGLISH && voice_rate > 0 && voice_rate < 44100) {
+    quiet_level = (int)(mOverlap * pow(voice_rate / 44100.0, 0.405) + 0.5);
+  }
   int flushframes = 0;  // mPendingFrames里应该输出的frames
 
   // 下一段音频里，0到cpframe - 1是已经被合并到mPendingFrames里的，

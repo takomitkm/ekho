@@ -61,6 +61,11 @@ int EkhoImpl::synth2(string text, SynthCallback* callback, void* userdata) {
     cerr << "speaking lang(" << mDict.getLanguage() << "): '" << text << "'" << endl;
   }
 
+  // Start from the state a freshly started process is in: the same text has to
+  // render the same bytes whatever this process spoke before. See the comment
+  // on EkhoImpl::resetSynthesisState().
+  this->resetSynthesisState();
+
   // Initialise espeak if this is the first synthesis. Upstream only ever did
   // this from speechDaemon(), the background thread behind speak() and
   // blockSpeak(), so a caller using Ekho::synth4() left espeak uninitialised:

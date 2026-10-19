@@ -129,6 +129,14 @@ void Audio::destroyProcessor() {
 #endif
 }
 
+void Audio::resetProcessor() {
+#ifdef HAVE_SONIC
+  if (this->processorStream) {
+    sonicResetStream(this->processorStream);
+  }
+#endif
+}
+
 
 int Audio::setTempo(int delta) {
 #if 1

@@ -10,7 +10,7 @@
 # libespeak-ng-dev.
 set -e
 
-SRC=${SRC:-/mnt/s/apps/llm/agentwork/ekho-linux}
+SRC=${SRC:-/mnt/s/work/WCIS/repos/ekho-linux}
 WORK=${WORK:-~/ekho-build}
 PREFIX=${PREFIX:-$WORK/prefix}
 JOBS=${JOBS:-$(nproc)}
