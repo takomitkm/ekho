@@ -22,7 +22,13 @@ KIT=$XROOT/kit-ekho
 # and scp'd into the guest's home. The commit in the file name is what the
 # kit's licence file and MANIFEST will carry, so keep the two in step; the
 # archive has no .git, which is why the commit is read from the name.
-TB=${1:-/c/Users/YiZhidi/ekho-linux-98e25cd.tar.gz}
+#
+# The default is the newest tarball sitting in the guest's home, not a
+# hardcoded sha: a stale default silently packs the *previous* commit and
+# stamps its sha into the licence file and MANIFEST. Pass a path as $1 to
+# override.
+TB=${1:-$(ls -t /c/Users/YiZhidi/ekho-linux-*.tar.gz 2>/dev/null | head -1)}
+[ -n "$TB" ] || die "no ekho-linux-*.tar.gz in /c/Users/YiZhidi -- pass one as \$1"
 COMMIT=$(basename "$TB" | sed -n 's/^ekho-linux-\([0-9a-f]\{7,\}\)\.tar\.gz$/\1/p')
 [ -n "$COMMIT" ] || die "cannot read a commit out of $(basename "$TB")"
 SRC=$XROOT/src/ekho-linux
