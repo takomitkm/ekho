@@ -8,7 +8,7 @@
 set -e
 
 PRISTINE=${PRISTINE:-/mnt/c/Users/takomi/AppData/Local/Temp/opencode/ekho-patched}
-REPO=${REPO:-/mnt/s/apps/llm/agentwork/ekho-linux}
+REPO=${REPO:-/mnt/s/work/WCIS/repos/ekho-linux}
 PY=/mnt/c/Users/takomi/AppData/Local/Temp/opencode
 DRV='/c/Program Files/Python313/python.exe'
 [ -x "$DRV" ] || DRV=$(command -v python3)

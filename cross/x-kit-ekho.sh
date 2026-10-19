@@ -334,8 +334,10 @@ done
     echo "under GPL-2.0-or-later as well. Either way the corresponding source has"
     echo "to travel with the binary. The source is:"
     echo
-    echo "  S:\\apps\\llm\\agentwork\\ekho-linux        (git, commit $COMMIT)"
-    echo "  S:\\apps\\llm\\agentwork\\crossekho         (the x-*.sh scripts that fetch, build, link and gate)"
+    echo "  S:\\work\\WCIS\\repos\\ekho-linux          (git, commit $COMMIT)"
+    echo "  https://github.com/takomitkm/ekho         (the same commit, public)"
+    echo "  S:\\apps\\llm\\agentwork\\crossekho         (the x-*.sh scripts that fetch, build, link and gate;"
+    echo "                                            a copy of them travels in the fork under cross/)"
     echo "  upstream tarballs used to build the kits live in the build host's"
     echo "  $XROOT/dl/ directory."
     echo

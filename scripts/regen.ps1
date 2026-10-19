@@ -2,7 +2,7 @@
 # fix. Runs on the dev machine (Windows paths), not in WSL.
 #   $PSScriptRoot\..\scripts\regen.ps1
 param(
-    [string]$Repo = 'S:\apps\llm\agentwork\ekho-linux',
+    [string]$Repo = 'S:\work\WCIS\repos\ekho-linux',
     [string]$Pristine = 'C:\Users\takomi\AppData\Local\Temp\opencode\ekho-patched',
     [string]$Tools = 'C:\Users\takomi\AppData\Local\Temp\opencode'
 )
