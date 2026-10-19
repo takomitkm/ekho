@@ -59,7 +59,13 @@ class Audio {
     int sampleRate; // Ekho voice source sample rate
     int currentSampleRate; // sonic processing sample (change for espeak)
     int outputSampleRate; // for readShortFrames
-    int channels; // default channels should be 1
+    // Output channels, and the voice pack's own channel count. They are kept
+    // apart because the pack is always mono but the output does not have to be:
+    // the board's only playback device (Lenovo MCP01 on the 113 box) accepts
+    // 48 kHz / S16_LE / 2ch and nothing else, so duplicating mono to stereo here
+    // is what keeps ALSA from resampling the stream a second time.
+    int channels; // channels to emit
+    int inputChannels; // channels the voice pack is stored in
     SpeechdSynthCallback* speechdSynthCallback;
 
 
@@ -78,6 +84,7 @@ class Audio {
     void setInputSampleRate(int rate);
     void setOutputSampleRate(int rate);
     void setChannels(int channels);
+    void setInputChannels(int channels);
     int readShortFrames(short buffer[], int size);
     int writeShortFrames(short buffer[], int size);
 

@@ -35,7 +35,11 @@ namespace ekho {
 
 long long nowUs();
 
-// Single producer / single consumer ring of 16-bit PCM frames.
+// Single producer / single consumer ring of 16-bit PCM samples.
+//
+// The unit is *samples* (interleaved 16-bit shorts), not audio frames: mono has
+// one sample per frame, stereo two. A caller that thinks in frames must multiply
+// by the channel count before sizing the ring.
 //
 // Overflow policy is drop-oldest in write(), for callers that would rather
 // lose stale audio than accrue latency. The streaming session does not use
@@ -44,7 +48,7 @@ long long nowUs();
 // instead. Backpressure, not dropping, is the right failure mode for TTS.
 class PcmRing {
  public:
-  explicit PcmRing(size_t capacityFrames);
+  explicit PcmRing(size_t capacitySamples);
   ~PcmRing();
 
   // Copies as much as fits, discarding the oldest frames on overflow.
@@ -66,7 +70,7 @@ class PcmRing {
   void abort();
 
   size_t available() const;
-  size_t capacityFrames() const { return capacity_; }
+  size_t capacitySamples() const { return capacity_; }
   size_t droppedFrames() const;
 
  private:
@@ -94,9 +98,10 @@ struct StreamStats {
 
 class StreamingSession {
  public:
-  // `engine` must outlive the session. `ringFrames` caps buffered audio;
-  // one second at 48 kHz is 48000.
-  StreamingSession(Ekho* engine, size_t ringFrames = 48000);
+  // `engine` must outlive the session. `ringSamples` caps buffered audio in
+  // interleaved 16-bit samples; one second at 48 kHz is 48000 in mono and 96000
+  // in stereo.
+  StreamingSession(Ekho* engine, size_t ringSamples = 48000);
   ~StreamingSession();
 
   // Feed a chunk of text. Synthesises every complete segment that can be cut

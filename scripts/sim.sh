@@ -48,13 +48,13 @@ FAILED=0
 # Pull a field out of the driver's JSON without needing jq.
 field() { sed -n "s/.*\"$2\":\([^,}]*\).*/\1/p" <<<"$1"; }
 
-# Duration of a WAV in seconds. The rate is read out of the file's header
-# rather than assumed: the voice pack decides the output rate (44.1 kHz
-# upstream packs, 8 kHz in this tree), so a hardcoded 44100 prints nonsense
-# as soon as the pack changes.
+# Duration of a WAV in seconds, from the file's own header. The byte rate at
+# offset 28 already folds in the sample rate, the channel count and the sample
+# width, so it stays right now that the default output is 48 kHz / 2ch rather
+# than the voice pack's 44.1 kHz / mono. `$2` overrides the byte rate.
 dur() { awk -v b="$(stat -c%s "$1" 2>/dev/null || echo 0)" \
-             -v r="${2:-$(od -An -tu4 -j 24 -N 4 "$1" 2>/dev/null | tr -d ' ')}" \
-             'BEGIN{printf "%.3f", (b-44)/2/(r ? r : 44100)}'; }
+             -v r="${2:-$(od -An -tu4 -j 28 -N 4 "$1" 2>/dev/null | tr -d ' ')}" \
+             'BEGIN{printf "%.3f", (b-44)/(r ? r : 176400)}'; }
 
 # |a-b| as a fraction of a, tested against a limit.
 within() { awk -v a="$1" -v b="$2" -v lim="$3" \

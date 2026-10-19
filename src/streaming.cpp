@@ -27,10 +27,10 @@ long long nowUs() {
 // PcmRing
 // ---------------------------------------------------------------------------
 
-PcmRing::PcmRing(size_t capacityFrames)
+PcmRing::PcmRing(size_t capacitySamples)
     : aborted_(false),
-      buf_(new short[capacityFrames]),
-      capacity_(capacityFrames),
+      buf_(new short[capacitySamples]),
+      capacity_(capacitySamples),
       readPos_(0),
       writePos_(0),
       count_(0),
@@ -142,9 +142,9 @@ size_t PcmRing::droppedFrames() const {
 // StreamingSession
 // ---------------------------------------------------------------------------
 
-StreamingSession::StreamingSession(Ekho* engine, size_t ringFrames)
+StreamingSession::StreamingSession(Ekho* engine, size_t ringSamples)
     : engine_(engine),
-      ring_(ringFrames),
+      ring_(ringSamples),
       segmented_(true),
       normalize_(true),
       sealed_(false),

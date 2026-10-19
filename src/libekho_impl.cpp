@@ -182,7 +182,17 @@ int EkhoImpl::initStream(void) {
   }
 
   this->audio->setInputSampleRate(mDict.mSfinfo.samplerate);
-  this->audio->setChannels(mDict.mSfinfo.channels);
+  // setInputSampleRate() records the pack's rate. The *output* rate is a
+  // separate, already-configured value (Ekho::setSampleRate), and
+  // initProcessor() re-reads it from audio->outputSampleRate below -- so a
+  // caller that asks for 48 kHz gets 48 kHz even when the pack is 44.1 kHz.
+  //
+  // The pack's channel count is the *input* layout, not the output one. It must
+  // not overwrite audio->channels: the pack is mono, while the caller may have
+  // asked for stereo (--channels=2, the board's speaker). This used to be a
+  // setChannels() call here, which silently threw the caller's choice away and
+  // made --channels a no-op.
+  this->audio->setInputChannels(mDict.mSfinfo.channels);
   this->audio->initProcessor();
 
   // Rescale the synthetic pauses before sizing the pending buffer below.
@@ -955,8 +965,14 @@ void EkhoImpl::setSpeed(int tempo_delta) {
   // English used to subtract this same value from espeakRATE, which is the bug
   // that was fixed in setEnglishSpeed().
   if (mDict.getLanguage() == MANDARIN && mDict.mSfinfo.frames > 0) {
-    baseDelta = (int)round(mDict.mSfinfo.frames * 2 * 44100 * 100 /
-                           mDict.mSfinfo.samplerate / 20362) - 100;
+    // Floating point on purpose. `frames * 44100 / samplerate` is the de5
+    // duration expressed in 44.1 kHz frames, and integer division truncates
+    // twice on the way in, which is enough to move baseDelta by one step:
+    // a 48 kHz pack whose frames/samplerate does not divide evenly lands on
+    // 238.x instead of 239.x and speaks 0.42% slower. Same value as before
+    // for the 44.1 kHz pack, where the numbers happen to divide exactly.
+    baseDelta = (int)round(mDict.mSfinfo.frames * 2.0 * 44100.0 * 100.0 /
+                           mDict.mSfinfo.samplerate / 20362.0) - 100;
     if (this->mDebug) {
       cerr << "setSpeed baseDelta=" << baseDelta << " (frames="
            << mDict.mSfinfo.frames << " samplerate="

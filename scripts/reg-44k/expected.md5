@@ -1,0 +1,10 @@
+# md5 of what the engine rendered for the seven reference texts at
+# 44.1 kHz / mono with the upstream 44.1 kHz pack
+# (ekho-data/pinyin.voice.44k). Recorded 2026-10-19; see reg-44k.sh.
+460713f4d86020f05f2f4d13ce863399  01-plain.wav
+34a29cabc170118f28dd95760b9e8456  02-numbers.wav
+d3198e1fd01cb8c6ed7b7dd549add36c  03-polyphone.wav
+7f26c7ebd5a3a8b1b77aa8c4a62b750c  04-sishi.wav
+90f64858395495e42ec51f8e579f4032  05-erhua.wav
+1f08916eabde33b2f9d1073643b53859  06-prose.wav
+67e29ac1871af1225a73161b19755a11  07-long-news.wav

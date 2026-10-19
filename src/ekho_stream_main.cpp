@@ -47,7 +47,9 @@ void usage(const char* argv0) {
           "      --max-segment-chars=N  cap on chars per synth4() burst (default: derived from the ring)\n"
           "      --ring-ms=N      PCM ring size in milliseconds (default 4000)\n"
           "      --consumer-delay=N  consumer polls every N ms (default 1)\n"
-          "      --samplerate=N   output sample rate (default: voice native)\n"
+          "      --samplerate=N   output sample rate (default 48000; 0 = voice native)\n"
+          "      --channels=N     output channels, 1 or 2 (default 2; the board's\n"
+          "                       speaker takes 2ch and the mono engine is duplicated)\n"
           "      --english-speed=N  percent on espeak's rate for English text\n"
           "                       (default 0; the base is 100 wpm, or EKHO_ESPEAK_RATE)\n"
           "      --json           emit machine-readable stats on stdout\n",
@@ -90,7 +92,8 @@ int main(int argc, char* argv[]) {
   bool json = false;
   int ringMs = 4000;
   int maxSegChars = 0;   // 0 = derive from ring capacity
-  int samplerate = 0;
+  int samplerate = 48000;
+  int channels = 2;
   int englishSpeed = 0;
 
   static struct option opts[] = {
@@ -106,6 +109,7 @@ int main(int argc, char* argv[]) {
       {"ring-ms", required_argument, nullptr, 1005},
       {"consumer-delay", required_argument, nullptr, 1008},
       {"samplerate", required_argument, nullptr, 1006},
+      {"channels", required_argument, nullptr, 1011},
       {"english-speed", required_argument, nullptr, 1010},
       {"json", no_argument, nullptr, 1007},
       {"help", no_argument, nullptr, 'h'},
@@ -129,6 +133,13 @@ int main(int argc, char* argv[]) {
       case 1008: consumerDelayMs = atoi(optarg); break;
       case 1009: maxSegChars = atoi(optarg); break;
       case 1010: englishSpeed = atoi(optarg); break;
+      case 1011:
+        channels = atoi(optarg);
+        if (channels != 1 && channels != 2) {
+          fprintf(stderr, "ekho-stream: --channels must be 1 or 2\n");
+          return 2;
+        }
+        break;
       default: usage(argv[0]); return 2;
     }
   }
@@ -145,27 +156,36 @@ int main(int argc, char* argv[]) {
   }
 
   Ekho engine;
+  // The output format must be in place before setVoice(): the resampler is
+  // built inside setVoice() -> initStream(), and its pitch/tempo factors fold in
+  // sampleRate/outputSampleRate. Calling setSampleRate() afterwards used to only
+  // relabel the WAV header -- 44.1 kHz samples in a file claiming 48 kHz.
+  if (samplerate > 0) engine.setSampleRate(samplerate);
+  engine.setChannels(channels);
   if (engine.setVoice(voice) != 0) {
     fprintf(stderr, "ekho-stream: cannot load voice '%s'\n", voice);
     return 3;
   }
-  if (samplerate > 0) engine.setSampleRate(samplerate);
   // English and Chinese rates are independent; this only moves espeak's rate.
   engine.setEnglishSpeed(englishSpeed);
 
   int rate = samplerate > 0 ? samplerate : engine.getSampleRate();
   if (rate <= 0) rate = 16000;
-  size_t ringFrames = (size_t)rate * ringMs / 1000;
-  if (ringFrames < 4096) ringFrames = 4096;
+  // The ring counts interleaved samples, not frames: one stereo frame is two
+  // shorts. Sizing it in frames would halve the buffered duration in stereo and
+  // shrink the derived segment cap with it.
+  size_t ringSamples =
+      (size_t)rate * (size_t)channels * (size_t)ringMs / 1000;
+  if (ringSamples < 4096) ringSamples = 4096;
 
-  ekho::StreamingSession session(&engine, ringFrames);
+  ekho::StreamingSession session(&engine, ringSamples);
   session.setSegmented(segmented);
   session.setNormalize(doNormalize);
   // One synth4() burst must fit inside the ring, so the segment cap follows the
   // ring: Mandarin is ~0.2 s per character.
   if (maxSegChars <= 0) {
     maxSegChars = (int)ekho::StreamingSession::deriveMaxSegmentChars(
-        ringFrames, rate);
+        ringSamples / (size_t)channels, rate);
   }
   session.setMaxSegmentChars((size_t)maxSegChars);
 
@@ -177,7 +197,7 @@ int main(int argc, char* argv[]) {
     SF_INFO info;
     memset(&info, 0, sizeof(info));
     info.samplerate = rate;
-    info.channels = 1;
+    info.channels = channels;
     info.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
     snd = sf_open(outPath, SFM_WRITE, &info);
     if (!snd) {
@@ -194,8 +214,10 @@ int main(int argc, char* argv[]) {
     for (;;) {
       int got = session.read(buf.data(), (int)buf.size(), 20);
       if (got > 0) {
-        if (snd) sf_writef_short(snd, buf.data(), got);
-        totalFrames += (size_t)got;
+        // `got` counts interleaved samples; libsndfile wants whole frames.
+        int framesOut = got / channels;
+        if (snd) sf_writef_short(snd, buf.data(), framesOut);
+        totalFrames += (size_t)framesOut;
         continue;
       }
       if (session.finished()) break;
@@ -231,16 +253,16 @@ int main(int argc, char* argv[]) {
 
   if (json) {
     printf("{\"voice\":\"%s\",\"chars\":%zu,\"segments\":%zu,"
-           "\"frames\":%zu,\"sample_rate\":%d,\"audio_s\":%.3f,"
+           "\"frames\":%zu,\"sample_rate\":%d,\"channels\":%d,\"audio_s\":%.3f,"
            "\"first_ms\":%.3f,\"gen_ms\":%.3f,\"total_ms\":%.3f,"
            "\"rtf\":%.3f,\"dropped_frames\":%zu,\"ring_ms\":%d,"
            "\"segmented\":%s,\"normalized\":%s,\"out\":\"%s\"}\n",
-           voice, text.size(), st.segments, frames, rate, audioSec, firstMs,
-           genMs, (double)elapsed / 1000.0, rtf, st.droppedFrames, ringMs,
-           segmented ? "true" : "false", doNormalize ? "true" : "false",
-           outPath ? outPath : "");
+           voice, text.size(), st.segments, frames, rate, channels, audioSec,
+           firstMs, genMs, (double)elapsed / 1000.0, rtf, st.droppedFrames,
+           ringMs, segmented ? "true" : "false",
+           doNormalize ? "true" : "false", outPath ? outPath : "");
   } else {
-    printf("voice          : %s @ %d Hz\n", voice, rate);
+    printf("voice          : %s @ %d Hz / %d ch\n", voice, rate, channels);
     printf("chars in       : %zu\n", text.size());
     printf("segments       : %zu (%s)\n", st.segments,
            segmented ? "clause-boundary" : "whole-buffer");

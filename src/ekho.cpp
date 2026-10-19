@@ -78,9 +78,13 @@ Syntax: ekho [option] [text]\n\
         EKHO_ESPEAK_RATE moves that base (80..450). Independent of -s, which\n\
         only moves the Chinese tempo.\n\
 --samplerate=SAMPLE_RATE\n\
-        Usually SAMPLE_RATE should be at least 8000. 44100 is CD quality.\n\
+        Output sample rate. Default 48000, which is what the only playback\n\
+        device on the target board (Lenovo MCP01 on the 113 box) accepts;\n\
+        the voice packs are 44100 so this is a resample. 0 means \"use the\n\
+        voice pack's own rate\" (44100 for Mandarin/Cantonese).\n\
 --channels=CHANNELS\n\
-        CHANNELS should be 1 or 2.\n\
+        Output channels, 1 or 2. Default 2 for the board's speaker; the mono\n\
+        engine output is duplicated, it is not a stereo recording.\n\
 --server\n\
         Start Ekho TTS server.\n\
 --request=TEXT\n\
@@ -226,8 +230,13 @@ int main(int argc, char *argv[]) {
   int tempo_delta = 0;
   int english_speed_delta = 0;
   const char* english_voice = nullptr;
-  int sample_rate = 0;
-  int channels = 1;
+  // Defaults follow the board's only playback device: 48 kHz / S16_LE / 2ch
+  // (see README "Output format"). --samplerate=0 asks for the voice pack's own
+  // rate instead; --channels=1 gives mono. The Mandarin/Cantonese packs are
+  // 44.1 kHz, so the default resamples 44.1k -> 48k without changing the
+  // speaking rate (sonic's pitch and tempo factors cancel).
+  int sample_rate = 48000;
+  int channels = 2;
   // 4096 rather than the old 2048: now that the pending buffer is sized from the
   // real sample rate the overlap actually runs, and 2048 was too timid to close
   // the inter-syllable gaps (9.60 s vs 8.96 s for the same sentence).

@@ -1,13 +1,17 @@
 // convert-voice: re-encode an ekho .voice pack at another sample rate.
 //
-// Lever #1 for the low-RSS kit. PhoneticSymbol::getPcm() decodes each symbol
-// chunk once and keeps the PCM for the life of the process, so resident voice
-// RAM is (pack duration x rate x 2 bytes). The bundled 44.1 kHz Mandarin pack
+// Two uses so far. (1) The shipped pack: the upstream Mandarin/Cantonese packs
+// are 44.1 kHz while the engine's default output is 48 kHz, so the engine runs
+// a sonic resample on every sample of every syllable. Converting the pack once,
+// offline, to 48 kHz makes pack rate == output rate and removes that work.
+// (2) The rejected low-RSS experiment: the bundled 44.1 kHz Mandarin pack
 // decodes to ~120 MB of cached PCM; the same syllables at 8 kHz decode to
-// ~22 MB. Nothing else in the pipeline cares about the rate: the .index header
-// carries it, setSpeed()'s tempo constant is duration-invariant, pause buffers
-// and the overlap floor rescale from mSfinfo.samplerate, and espeak's 22050 Hz
-// goes through the same sonic stream as everything else.
+// ~22 MB. (Rejected 2026-10: the 4 kHz lowpass dulls the sibilants.)
+//
+// Nothing else in the pipeline cares about the rate: the .index header carries
+// it, setSpeed()'s tempo constant is duration-invariant, pause buffers and the
+// overlap floor rescale from mSfinfo.samplerate, and espeak's 22050 Hz goes
+// through the same sonic stream as everything else.
 //
 // Each chunk of a .voice file is a complete WAV file with its own header (see
 // Dict::makeVoiceFile and the note in PhoneticSymbol::getPcm), and the runtime
@@ -17,10 +21,23 @@
 // order and codes are preserved verbatim; empty records (bytes == 0, used by
 // the tone-5 -> tone-1 fallback) stay empty.
 //
-// Resampling is a windowed-sinc fractional resampler (Blackman window, taps
-// each side, cutoff at the output Nyquist): linear interpolation would alias
-// the 4-22 kHz band of the source down onto speech. Chunk durations are
-// preserved to one output sample, so speaking rate does not move.
+// Resampling is a windowed-sinc fractional resampler (Blackman window, TAPS
+// each side, cutoff at the lower of the two Nyquists): linear interpolation
+// would alias the 4-22 kHz band of the source down onto speech, and using the
+// *output* Nyquist when going up would let the 22.05-24 kHz images of a 44.1k
+// source through instead of removing them. Chunk durations are preserved to
+// one output sample, so speaking rate does not move.
+//
+// Since 2026-10 the shipped Mandarin/Cantonese packs ARE 48 kHz, produced by
+// this tool from the upstream 44.1 kHz ones:
+//
+//   convert-voice pinyin.voice.44k pinyin.index.44k 48000 pinyin.voice pinyin.index
+//
+// That is what lets the engine run with pack rate == output rate: no sonic
+// resample per sample on the target, and no linear-interpolation imaging.
+// The rate is carried by the .index header, so this is invisible to the code
+// path. Output Nyquist > input Nyquist here, i.e. no bandwidth is lost and
+// nothing gets "darker" -- the 22.05 kHz band of the source survives intact.
 //
 // NOTE on join duration: the engine joins syllables by walking each chunk's
 // edges while samples sit below quiet_level (mOverlap, 4096), and at 8 kHz
@@ -158,31 +175,93 @@ static double sinc(double x) {
   return sin(pix) / pix;
 }
 
-// Windowed-sinc fractional resample: fc is the cutoff in cycles per input
-// sample (the output Nyquist), TAPS the half-width of the Blackman window.
+// One tap: Blackman-windowed sinc at offset d input samples, fc cycles per
+// input sample. Zero outside the window, exactly as the direct loop skipped.
+static double tap(double d, double fc) {
+  if (d <= -(double)TAPS || d >= (double)TAPS)
+    return 0.0;
+  double u = d / (double)TAPS + 1.0; // 0..2
+  double w = 0.42 - 0.5 * cos(M_PI * u) + 0.08 * cos(2.0 * M_PI * u);
+  return w * sinc(fc * d);
+}
+
+static long gcdLong(long a, long b) {
+  while (b) {
+    long t = a % b;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+
+// Phases beyond this fall back to evaluating the kernel per sample.
+#define MAX_PHASES 4096
+
+// Windowed-sinc fractional resample. t = j * rateIn / rateOut is rational
+// (rateIn/g and rateOut/g integers), so its fractional part takes only
+// rateOut/g distinct values: tabulate the kernel per phase instead of calling
+// sin() and cos() 2*TAPS+1 times per output sample. 125 MB of 44.1 kHz pack
+// is ~68 M output samples here, which is minutes that way and seconds this
+// way. The kernel is the same function of the same offsets; only how the
+// phase is derived (exact integers instead of a rounded double) differs, by
+// ~1e-16, which cannot move a PCM16 sample by more than a bit of dither.
 static long resample(const double *in, long nIn, int rateIn, double *out,
                      long nOutMax, int rateOut) {
-  double fc = 0.5 * ((double)rateOut / (double)rateIn);
+  // Cutoff at the lower of the two Nyquists, in cycles per input sample.
+  // Going down (44.1k -> 8k) that is the output Nyquist, which keeps the
+  // discarded band from folding back into speech. Going up (44.1k -> 48k)
+  // the output Nyquist would sit *above* the source band's 0.5 and let its
+  // 22.05-24 kHz images through; the input Nyquist is the ideal
+  // reconstruction and leaves the source band completely intact.
+  double fc = 0.5;
+  if (rateOut < rateIn)
+    fc = 0.5 * ((double)rateOut / (double)rateIn);
+
   long nOut = (long)llround((double)nIn * (double)rateOut / (double)rateIn);
   if (nOut > nOutMax)
     nOut = nOutMax;
 
-  for (long j = 0; j < nOut; j++) {
-    double t = (double)j * (double)rateIn / (double)rateOut;
-    long i0 = (long)floor(t);
-    double acc = 0.0;
-    for (long i = i0 - TAPS; i <= i0 + TAPS; i++) {
-      double d = t - (double)i;
-      if (d <= -(double)TAPS || d >= (double)TAPS)
-        continue;
-      double u = d / (double)TAPS + 1.0; // 0..2
-      double w = 0.42 - 0.5 * cos(M_PI * u) + 0.08 * cos(2.0 * M_PI * u);
-      long idx = i < 0 ? 0 : (i >= nIn ? nIn - 1 : i);
-      acc += in[idx] * w * sinc(fc * d);
+  long g = gcdLong(rateIn, rateOut);
+  long L = rateOut / g; // distinct fractional positions
+  long M = rateIn / g;
+  double *tab = NULL;
+  if (L <= MAX_PHASES) {
+    tab = (double *)malloc((size_t)L * (2 * TAPS + 1) * sizeof(double));
+    if (!tab) {
+      perror("malloc");
+      return 0;
     }
-    acc *= fc;
-    out[j] = acc;
+    for (long p = 0; p < L; p++) {
+      double frac = (double)p / (double)L;
+      for (long m = -TAPS; m <= TAPS; m++)
+        tab[p * (2 * TAPS + 1) + (m + TAPS)] = tap(frac + (double)m, fc);
+    }
   }
+
+  for (long j = 0; j < nOut; j++) {
+    double acc = 0.0;
+    if (tab) {
+      long long num = (long long)j * M; // position in input samples = num / L
+      long i0 = (long)(num / L);
+      long p = (long)(num - (long long)i0 * L);
+      const double *row = tab + p * (2 * TAPS + 1);
+      for (long m = -TAPS; m <= TAPS; m++) {
+        long i = i0 - m;
+        long idx = i < 0 ? 0 : (i >= nIn ? nIn - 1 : i);
+        acc += in[idx] * row[m + TAPS];
+      }
+    } else {
+      double t = (double)j * (double)rateIn / (double)rateOut;
+      long i0 = (long)floor(t);
+      for (long i = i0 - TAPS; i <= i0 + TAPS; i++) {
+        long idx = i < 0 ? 0 : (i >= nIn ? nIn - 1 : i);
+        acc += in[idx] * tap(t - (double)i, fc);
+      }
+    }
+    out[j] = acc * fc;
+  }
+
+  free(tab);
   return nOut;
 }
 
@@ -403,7 +482,13 @@ int main(int argc, char **argv) {
       int16_t pcm16 = (int16_t)v;
       fwrite(&pcm16, 2, 1, ov);
     }
-    putU24(oi, dataBytes);
+    // The record length is the WHOLE chunk, header included: the runtime
+    // freads `bytes` bytes from `offset` and hands exactly those to
+    // libsndfile, so an entry that counts only the PCM loses the last 22
+    // frames of every syllable (measured: every chunk came back 22 frames
+    // short, which is 44 B of header, and the pack ran 0.1% fast). The
+    // upstream .voice files count the header; match them.
+    putU24(oi, 44 + dataBytes);
     outOffset += 44 + dataBytes;
     nConverted++;
   }

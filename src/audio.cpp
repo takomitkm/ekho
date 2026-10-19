@@ -51,6 +51,7 @@ Audio::Audio(void) {
   this->currentSampleRate = 0; // sonic processing sample (change for espeak)
   this->outputSampleRate = 0; // for readShortFrames
   this->channels = 1;
+  this->inputChannels = 1;
   this->speechdSynthCallback = nullptr;
   this->hasProcessorInited = false;
   this->pcmFrameBuffer = nullptr;
@@ -226,13 +227,44 @@ void Audio::setInputSampleRate(int rate) {
   }
 }
 
+// The voice pack's own layout. Only the channel count of the *input* is needed:
+// the pack is mono, and the output may be upmixed in readShortFrames().
+void Audio::setInputChannels(int channels) {
+  this->inputChannels = channels > 0 ? channels : 1;
+}
+
 void Audio::setOutputSampleRate(int rate) {
   if (Audio::debug) {
     cerr << "Audio::setOutputSampleRate: " << rate << endl;
   }
 
-  if (rate > 0) {
-    this->outputSampleRate = rate;
+  if (rate <= 0 || rate == this->outputSampleRate) {
+    return;
+  }
+
+  // The processor (sonic) is created at outputSampleRate, and its pitch/tempo
+  // factors are computed as factor * sampleRate / outputSampleRate. Setting the
+  // member alone therefore only relabels the output: an *already initialised*
+  // stream keeps resampling to the old rate while the WAV header or
+  // Content-Type claims the new one. Callers that know the rate up front (the
+  // CLI) call this before setVoice() and never take the rebuild path below.
+  bool rebuild = this->hasProcessorInited;
+
+  this->outputSampleRate = rate;
+
+  if (rebuild) {
+    // Rebuild the processor at the new rate, then put back everything
+    // initProcessor() resets. The deltas are the caller-visible state
+    // (setTempo/setPitch/setRate/setVolume store them), and re-applying a delta
+    // of 0 is not a no-op: the float setters fold in the *new*
+    // sampleRate/outputSampleRate ratio, which is exactly the compensation a
+    // fresh initProcessor() would have installed.
+    this->destroyProcessor();
+    this->initProcessor();
+    this->setTempo(this->tempoDelta);
+    this->setPitch(this->pitchDelta);
+    this->setRate(this->rateDelta);
+    this->setVolume(this->volumeDelta);
   }
 }
 
@@ -319,7 +351,15 @@ int Audio::readShortFrames(short buffer[], int size) {
 
   if (this->channels == 2) {
     int monoSize = sonicReadShortFromStream(this->processorStream, buffer, size / 2);
-    for (int i = monoSize; i >= 0; i--) {
+    // Expand mono to interleaved stereo back to front, so the mono sample at
+    // index i is read before it is overwritten. The loop must start at
+    // monoSize - 1: starting at monoSize used to write buffer[2*monoSize] and
+    // buffer[2*monoSize+1], one frame past the data sonic just returned, and
+    // with a full read (monoSize == size/2) those two shorts land past the end
+    // of the caller's buffer -- a two-short heap overflow. The extra frame was
+    // never part of the returned count, so nothing it wrote ever reached a
+    // file; the audio is unchanged, only the write goes away.
+    for (int i = monoSize - 1; i >= 0; i--) {
       buffer[i + i + 1] = buffer[i];
       buffer[i + i] = buffer[i];
     }
@@ -613,6 +653,11 @@ int EkhoImpl::saveOgg(string text, string filename) {
   SF_INFO sfinfo;
   memcpy(&sfinfo, &mDict.mSfinfo, sizeof(SF_INFO));
   sfinfo.format = SF_FORMAT_OGG | SF_FORMAT_VORBIS;
+  // Same as saveWav(): the encoder has to be told the format writePcm() will
+  // actually feed it, not the voice pack's layout. The pack is 44.1 kHz mono;
+  // the output defaults to 48 kHz stereo.
+  sfinfo.samplerate = this->audio->outputSampleRate;
+  sfinfo.channels = this->audio->channels;
   if (EkhoImpl::mDebug) {
     cerr << "sfinfo format: samplerate=" << sfinfo.samplerate
          << ", channel=" << sfinfo.channels;

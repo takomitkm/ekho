@@ -91,6 +91,14 @@ int EkhoImpl::synth2(string text, SynthCallback* callback, void* userdata) {
   short* shortPcm = nullptr;
 
   if (mDict.getLanguage() == ENGLISH) {
+    // English has no voice pack: the whole utterance comes from espeak. This
+    // used to return 0 without synthesising anything, so `ekho -v English -o
+    // out.wav` wrote a 44-byte (header-only) WAV and ekho-stream/ekho-server
+    // produced no PCM at all. The mixed Chinese/English path never noticed,
+    // because there espeak is entered per word from synthesize() instead.
+    // synthWithEspeak() uses Ekho::synthCallback/synthUserdata, both of which
+    // were set above.
+    synthWithEspeak(text);
     return 0;
   }
 

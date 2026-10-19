@@ -80,16 +80,20 @@ hr "2. POST /tts?wait=1 vs the one-shot CLI"
 "$OUT/ekho" -v Mandarin -f "$SIM/zh.txt" -o "$SIM/ref.wav" >/dev/null 2>&1
 curl -s -X POST --data-binary "@$SIM/zh.txt" "$BASE/tts?wait=1" -o "$SIM/wait.wav"
 refb=$(stat -c%s "$SIM/ref.wav"); waitb=$(stat -c%s "$SIM/wait.wav")
-reff=$(( (refb - 44) / 2 )); waitf=$(( (waitb - 44) / 2 ))
-# The voice pack decides the sample rate -- the converted Mandarin pack is
-# 8 kHz -- so take it out of the WAV header rather than assuming 44.1 kHz.
+# Duration from the WAV byte rate (offset 28), which already folds in the sample
+# rate, the channel count and the sample width. Assuming "2 bytes per frame,
+# 44.1 kHz" here is what made the old numbers disagree with the driver's JSON as
+# soon as the default format moved to the board's 48 kHz / 2ch.
+wavsec() { awk -v b="$(stat -c%s "$1")" \
+                -v r="$(od -An -tu4 -j 28 -N 4 "$1" | tr -d ' ')" \
+                'BEGIN{printf "%.3f", (b-44)/(r ? r : 176400)}'; }
 wavrate() { od -An -tu4 -j 24 -N 4 "$1" | tr -d ' '; }
-refr=$(wavrate "$SIM/ref.wav"); waitr=$(wavrate "$SIM/wait.wav")
-printf '  one-shot CLI  %9s B  %8.3f s\n  wait=1        %9s B  %8.3f s\n  rate          %9s Hz\n' \
-       "$refb" "$(awk -v f="$reff" -v r="$refr" 'BEGIN{printf "%.3f", f/r}')" \
-       "$waitb" "$(awk -v f="$waitf" -v r="$waitr" 'BEGIN{printf "%.3f", f/r}')" \
-       "$refr"
-if awk -v a="$reff" -v b="$waitf" 'BEGIN{d=(a>b?a-b:b-a); exit !(d <= a*0.10)}'; then
+wavch()   { od -An -tu2 -j 22 -N 2 "$1" | tr -d ' '; }
+refs=$(wavsec "$SIM/ref.wav"); waits=$(wavsec "$SIM/wait.wav")
+printf '  one-shot CLI  %9s B  %8.3f s\n  wait=1        %9s B  %8.3f s\n  format        %9s Hz  %s ch\n' \
+       "$refb" "$refs" "$waitb" "$waits" \
+       "$(wavrate "$SIM/ref.wav")" "$(wavch "$SIM/ref.wav")"
+if awk -v a="$refs" -v b="$waits" 'BEGIN{d=(a>b?a-b:b-a); exit !(d <= a*0.10)}'; then
   ok "duration within 10% of the one-shot CLI"
 else
   bad "duration differs from the one-shot CLI by more than 10%"
@@ -100,6 +104,16 @@ hr "3. streaming POST /tts: chunked PCM, length-framed by the transfer coding"
 # ---------------------------------------------------------------------------
 curl -s -D "$SIM/hdr.txt" -X POST --data-binary "@$SIM/zh.txt" "$BASE/tts" -o "$SIM/stream.pcm"
 grep -iE '^(HTTP/|content-type|transfer-encoding|x-ekho)' "$SIM/hdr.txt" | sed 's/^/  /'
+# The streaming format must describe the same audio the WAV contains; a stale
+# ";channels=1" here is how a stereo stream gets played as half-speed noise.
+refr=$(wavrate "$SIM/ref.wav"); refc=$(wavch "$SIM/ref.wav")
+ct=$(sed -n 's/^[Cc]ontent-[Tt]ype: *//p' "$SIM/hdr.txt" | tr -d '\r')
+case "$ct" in
+  *"rate=$refr"*"channels=$refc"*)
+    ok "Content-Type advertises the WAV format ($refr Hz / $refc ch)" ;;
+  *)
+    bad "Content-Type '$ct' does not match ${refr} Hz / ${refc} ch" ;;
+esac
 pcmb=$(stat -c%s "$SIM/stream.pcm")
 # same audio as ?wait=1, minus its 44-byte WAV header
 wavb=$((waitb - 44))

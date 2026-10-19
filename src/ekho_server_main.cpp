@@ -87,7 +87,8 @@ void usage(const char* argv0) {
           "      --out-dir=DIR    where synthesised WAVs are kept (default /tmp)\n"
           "      --no-save        stream only, keep no server-side copy\n"
           "      --max-segment-chars=N  cap on chars per synth4() burst (0=derive)\n"
-          "      --samplerate=N   output sample rate (default: voice native)\n"
+          "      --samplerate=N   output sample rate (default 48000; 0 = voice native)\n"
+          "      --channels=N     output channels, 1 or 2 (default 2; the board's speaker)\n"
           "      --english-speed=N  espeak rate delta for English text, percent\n"
           "                       (default 0 = 100 wpm; EKHO_ESPEAK_RATE moves the base)\n"
           "      --verbose        log each request\n"
@@ -164,8 +165,11 @@ struct ServerState {
   // default rather than zero.
   int defaultEnglishSpeed = 0;
   int currentEnglishSpeed = kUnsetDelta;  // what the engine has applied now
-  size_t ringFrames = 0;
+  // The PCM ring counts interleaved samples (shorts), so stereo needs twice the
+  // capacity for the same number of milliseconds of audio.
+  size_t ringSamples = 0;
   int rate = 0;
+  int channels = 2;
   int ringMs = 4000;
   int maxSegmentChars = 0;
   bool verbose = false;
@@ -191,6 +195,7 @@ void addCommonHeaders(ekho::HttpConnection& conn, const ServerState* st) {
   conn.addHeader("Server", "ekho-server");
   conn.addHeader("Cache-Control", "no-store");
   conn.addHeader("X-Ekho-Sample-Rate", std::to_string(st->rate));
+  conn.addHeader("X-Ekho-Channels", std::to_string(st->channels));
 }
 
 bool sendJson(ekho::HttpConnection& conn, int status, const char* reason,
@@ -331,7 +336,7 @@ bool handleTts(ekho::HttpConnection& conn, const ekho::HttpRequest& req,
     SF_INFO info;
     memset(&info, 0, sizeof info);
     info.samplerate = st->rate;
-    info.channels = 1;
+    info.channels = st->channels;
     info.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
     snd = sf_open(outPath.c_str(), SFM_WRITE, &info);
     if (snd == nullptr) {
@@ -346,7 +351,7 @@ bool handleTts(ekho::HttpConnection& conn, const ekho::HttpRequest& req,
     }
   }
 
-  ekho::StreamingSession session(st->engine, st->ringFrames);
+  ekho::StreamingSession session(st->engine, st->ringSamples);
   session.setSegmented(true);
   session.setNormalize(true);
   if (st->maxSegmentChars > 0) {
@@ -361,7 +366,8 @@ bool handleTts(ekho::HttpConnection& conn, const ekho::HttpRequest& req,
   if (streaming) {
     conn.addHeader("Content-Type",
                    "audio/L16;rate=" + std::to_string(st->rate) +
-                       ";channels=1;bit=16");
+                       ";channels=" + std::to_string(st->channels) +
+                       ";bit=16");
     addCommonHeaders(conn, st);
     if (!outPath.empty()) conn.addHeader("X-Ekho-File", outPath);
     if (!conn.beginBody(200, "OK", true)) {
@@ -378,7 +384,9 @@ bool handleTts(ekho::HttpConnection& conn, const ekho::HttpRequest& req,
     for (;;) {
       int got = session.read(buf.data(), (int)buf.size(), 20);
       if (got > 0) {
-        if (snd) sf_writef_short(snd, buf.data(), got);
+        // `got` counts interleaved samples; libsndfile wants whole frames.
+        int framesOut = got / st->channels;
+        if (snd) sf_writef_short(snd, buf.data(), framesOut);
         if (streaming &&
             !conn.writeChunk(buf.data(), (size_t)got * 2)) {
           sendFailed = true;
@@ -386,7 +394,7 @@ bool handleTts(ekho::HttpConnection& conn, const ekho::HttpRequest& req,
           session.stop();
           break;
         }
-        totalFrames += (size_t)got;
+        totalFrames += (size_t)framesOut;
         continue;
       }
       if (session.finished()) break;
@@ -460,6 +468,7 @@ bool handleRequest(ekho::HttpConnection& conn, const ekho::HttpRequest& req,
         "{\"status\":\"ok\",\"voice\":\"" +
             ekho::httpJsonEscape(st->currentDisplay) +
         "\",\"sample_rate\":" + std::to_string(st->rate) +
+        ",\"channels\":" + std::to_string(st->channels) +
         ",\"ring_ms\":" + std::to_string(st->ringMs) + "}\n";
     return sendJson(conn, 200, "OK", json);
   }
@@ -495,7 +504,8 @@ int main(int argc, char* argv[]) {
   const char* outDir = "/tmp";
   int ringMs = 4000;
   int maxSegChars = 0;
-  int samplerate = 0;
+  int samplerate = 48000;
+  int channels = 2;
   int englishSpeed = 0;
   bool verbose = false;
   bool saveFiles = true;
@@ -509,6 +519,7 @@ int main(int argc, char* argv[]) {
       {"no-save", no_argument, nullptr, 1003},
       {"max-segment-chars", required_argument, nullptr, 1004},
       {"samplerate", required_argument, nullptr, 1005},
+      {"channels", required_argument, nullptr, 1008},
       {"english-speed", required_argument, nullptr, 1007},
       {"verbose", no_argument, nullptr, 1006},
       {"help", no_argument, nullptr, 'h'},
@@ -528,6 +539,13 @@ int main(int argc, char* argv[]) {
       case 1005: samplerate = atoi(optarg); break;
       case 1006: verbose = true; break;
       case 1007: englishSpeed = atoi(optarg); break;
+      case 1008:
+        channels = atoi(optarg);
+        if (channels != 1 && channels != 2) {
+          fprintf(stderr, "ekho-server: --channels must be 1 or 2\n");
+          return 2;
+        }
+        break;
       default: usage(argv[0]); return 2;
     }
   }
@@ -551,6 +569,14 @@ int main(int argc, char* argv[]) {
   }
 
   Ekho engine;
+  // The output format has to be in place before the first setVoice(): the
+  // resampler is built inside setVoice() -> initStream(). Calling setSampleRate()
+  // afterwards used to only relabel the output, leaving 44.1 kHz samples under a
+  // 48 kHz header. The voice probe below goes through setVoice() repeatedly, and
+  // every one of those re-creates the processor at outputSampleRate, so setting
+  // it once here is what makes the probe harmless.
+  if (samplerate > 0) engine.setSampleRate(samplerate);
+  engine.setChannels(channels);
   // setVoice() applies the tempo normalisation itself once the pack is loaded,
   // so there is no separate setSpeed() call here.
   if (engine.setVoice(defaultAlias->canonical) != 0) {
@@ -592,7 +618,6 @@ int main(int argc, char* argv[]) {
   // The probe will have landed on the last voice that loaded; go back to the one
   // the operator asked for.
   engine.setVoice(defaultAlias->canonical);
-  if (samplerate > 0) engine.setSampleRate(samplerate);
 
   int rate = samplerate > 0 ? samplerate : engine.getSampleRate();
   if (rate <= 0) rate = 16000;
@@ -601,11 +626,14 @@ int main(int argc, char* argv[]) {
   st.currentVoice = defaultAlias->canonical;
   st.currentDisplay = defaultAlias->display;
   st.rate = rate;
-  st.ringFrames = (size_t)rate * (size_t)ringMs / 1000;
-  if (st.ringFrames < 4096) st.ringFrames = 4096;
+  st.channels = channels;
+  // Interleaved samples, not frames: stereo needs twice the capacity for the
+  // same number of milliseconds, and deriveMaxSegmentChars() takes frames.
+  st.ringSamples = (size_t)rate * (size_t)channels * (size_t)ringMs / 1000;
+  if (st.ringSamples < 4096) st.ringSamples = 4096;
   if (maxSegChars <= 0) {
     maxSegChars = (int)ekho::StreamingSession::deriveMaxSegmentChars(
-        st.ringFrames, rate);
+        st.ringSamples / (size_t)channels, rate);
   }
   st.maxSegmentChars = maxSegChars;
 
@@ -623,9 +651,9 @@ int main(int argc, char* argv[]) {
 
   if (!server.listen()) return 4;
 
-  printf("ekho-server listening on %s:%d  voice=%s  rate=%d Hz  ring=%d ms  "
-         "segment cap=%d chars\n",
-         host, port, voice, rate, ringMs, maxSegChars);
+  printf("ekho-server listening on %s:%d  voice=%s  rate=%d Hz  channels=%d  "
+         "ring=%d ms  segment cap=%d chars\n",
+         host, port, voice, rate, channels, ringMs, maxSegChars);
   printf("  voices installed:");
   for (size_t i = 0; i < st.availableVoices.size(); i++) {
     printf(" %s", displayName(st.availableVoices[i]));
