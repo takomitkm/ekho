@@ -44,25 +44,35 @@ Added on top of upstream:
   rate is 100 wpm and the espeak voice is `en-us+f3`, both picked by ear on 2026-10-17
   (see `scripts/make-samples.sh` groups 05 and 06); `--english-voice` overrides the
   voice for one run and `EKHO_ESPEAK_VOICE` moves the default without a rebuild.
-* **The Mandarin pack is 8 kHz.** The tracked `ekho-data/pinyin.index` describes an
-  8 kHz version of the upstream 44.1 kHz pack, and `scripts/convert-voice.c` produces
-  the matching `pinyin.voice` from the upstream one (the repo keeps the 44.1 kHz pair
-  next to it as `*.44k` once converted). Ekho decodes each syllable chunk on first use
-  and keeps the PCM for the life of the process, so a session that touches every
-  syllable caches ~23 MB of PCM instead of ~125 MB: measured peak RSS 48 MB vs 117 MB
-  on a text that reaches every syllable in the dictionary (small sentences: 24.5 vs
-  25.3 MB). Plain 16-bit PCM is deliberate -- this change is about resident RAM, not
-  disk. One engine change goes with it: the syllable-join threshold scales with the
-  pack rate (`EkhoImpl::writeToSonicStream`); without that the resampler's 4 kHz
-  low-pass makes the joins walk further and the pack speaks ~11% fast. 44.1 kHz and
-  English behaviour are byte-identical, and speaking rate stays close to the 44.1 kHz
-  pack: over 11 ordinary sentences plus 7 listening texts the median length difference
-  is +0.2% and the worst ordinary case 3.5%. Sibilant-dense text is the exception --
-  a tongue twister comes out ~12% short at every threshold, because the low-pass
-  removes the waveform features the join walk keys on. The output sample rate follows
-  the pack, so `-o file.wav` now writes 8 kHz (a 4 kHz band) unless
-  `--samplerate=22050`/`44100` is passed; that flag also keeps espeak-ng's English at
-  its native bandwidth in mixed text.
+* **The Mandarin pack is 48 kHz, and 48 kHz / 2ch is the default output.** The tracked
+  `ekho-data/pinyin.index` describes a 48 kHz version of the upstream 44.1 kHz pack,
+  and `scripts/convert-voice.c` produces the matching `pinyin.voice` from the upstream
+  one. The 44.1 kHz originals stay next to them as `*.44k` -- they are what the
+  converter reads, and both pairs are gitignored, so a clone has to supply them before
+  the pack can be re-derived or the regression anchor run.
+  The rate follows the target board: its only playback device accepts
+  48 kHz / S16_LE / 2ch and nothing else, so `ekho`, `ekho-server` and `ekho-stream`
+  all default there, and pack rate equals output rate -- no sonic resample on every
+  sample of every syllable. `--samplerate=0` asks for the pack's own rate,
+  `--channels=1` for mono.
+  **This replaced an 8 kHz conversion made the same day.** Ekho decodes each syllable
+  chunk on first use and keeps the PCM for the life of the process, so 8 kHz had cut
+  peak RSS from 117 MB to 48 MB on a text reaching every syllable in the dictionary
+  (small sentences 25.3 -> 24.5 MB). It was dropped because that resampler's 4 kHz
+  low-pass dulls the sibilants. The trade is explicit: the 48 kHz pack is
+  136,359,454 B against the 44.1 kHz original's 125,287,518 B, so the resident-RAM
+  saving is gone -- **RSS at 48 kHz has not been measured, and neither has the CPU the
+  missing resample would save.**
+  Speaking rate holds: `scripts/reg-44k/expected.md5` records the 44.1 kHz / mono
+  bytes of seven reference texts and `scripts/reg-44k.sh` re-checks them, then measures
+  the 48 kHz / 2ch renders against them (recorded 2026-10-19: mean -0.17%, worst
+  -1.32%; it fails past mean 0.5% or any single text 2%). The syllable-join threshold
+  is **not** rate-scaled at 44.1 kHz and above -- scaling it was measured on the
+  48 kHz pack and made things worse (worst 3.4%), so `quiet_level` stays equal to
+  `mOverlap` there; see the comment in `src/libekho_impl.cpp`. The ~11% and ~12%
+  figures that used to sit in this section were artifacts of the rejected 8 kHz pack.
+  **Cantonese is not converted**: `jyutping.voice` is still 16 kHz, so that voice does
+  get resampled at run time.
 
 ### Known issues
 
