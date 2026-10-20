@@ -16,6 +16,7 @@ include_HEADERS = \
 	src/audio.h \
 	src/character.h \
 	src/phonetic_symbol.h \
+	src/resample.h \
 	src/zhy_symbol_map.h \
 	src/zh_symbol_map.h \
 	src/ekho_typedef.h \
@@ -33,6 +34,7 @@ libekho_a_SOURCES = \
 	src/ssml.cpp \
 	src/audio.cpp \
 	src/phonetic_symbol.cpp \
+	src/resample.cpp \
 	src/word.cpp \
 	src/ekho_dict.cpp \
 	src/number.cpp \

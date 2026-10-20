@@ -39,6 +39,14 @@ namespace ekho {
   class PhoneticSymbol {
     public:
       static bool debug;
+      // The rate the engine consumes PCM at, i.e. the voice pack's rate. Set by
+      // Dict::setVoice() once the pack is loaded; readSndfile() resamples the
+      // alphabet samples to it, because upstream records those at 16 kHz while
+      // the pack is 44.1 kHz (upstream) or 48 kHz (this fork), and a 16 kHz
+      // sample played as if it were pack-rate runs 2.76x or 3x fast. See
+      // resample.h.
+      static int targetSampleRate;
+
       PhoneticSymbol(void): symbol(0), offset(0), bytes(0), mPcm(0), mSize(0) {};
       PhoneticSymbol(const char *sym):
         symbol(sym), offset(0), bytes(0), mPcm(0), mSize(0) {};

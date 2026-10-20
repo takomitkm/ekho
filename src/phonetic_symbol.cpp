@@ -26,10 +26,12 @@
 #include <vector>
 #include "audio.h"
 #include "ekho_dict.h"
+#include "resample.h"
 
 using namespace std;
 namespace ekho {
   bool PhoneticSymbol::debug = false;
+  int PhoneticSymbol::targetSampleRate = 0;
 
   // Memory-backed source for libsndfile. libsndfile has no "open from
   // memory" call -- sf_open_virtual() is the documented way to decode a
@@ -85,6 +87,26 @@ namespace ekho {
       cerr << "PhoneticSymbol::getPcm:" << "symbol=" <<
         this->symbol << ", offset=" << offset <<
         ", bytes=" << bytes << endl;
+    }
+
+    // Letters have no chunk in the .voice blob (bytes == 0): their samples are
+    // the 16 kHz files in ekho-data/alphabet/<letter>.wav. They are loaded here,
+    // on first use, rather than in Dict::addSpecialSymbols(), because
+    // readSndfile() needs the pack rate and the pack is only chosen afterwards
+    // (Dict::setVoice). See resample.h.
+    if (!mPcm && bytes == 0 && symbol && symbol[0] == '\\' && Dict::me &&
+        !Dict::me->mDataPath.empty()) {
+      char c = symbol[1] | 32;
+      if (c >= 'a' && c <= 'z') {
+        string path = Dict::me->mDataPath + "/alphabet/" + c + ".wav";
+        SF_INFO sfinfo;
+        memset(&sfinfo, 0, sizeof(SF_INFO));
+        SNDFILE *sndfile = sf_open(path.c_str(), SFM_READ, &sfinfo);
+        if (sndfile) {
+          readSndfile(sndfile, sfinfo);
+          sf_close(sndfile);
+        }
+      }
     }
 
 
@@ -195,6 +217,31 @@ namespace ekho {
         if (samples != sfinfo.frames) {
           cerr << "Fail to read : " << samples <<
             " frames out of " << sfinfo.frames << " have been read." << endl;
+        }
+
+        // Alphabet samples are recorded at their own rate (16 kHz upstream),
+        // not at the pack's. Left alone they play 2.76x too fast on the 44.1 kHz
+        // pack and 3x on the 48 kHz one, so bring them onto the pack rate here,
+        // once, at load time. Everything else that reaches this function is a
+        // .voice chunk, which already carries the pack rate (convert-voice
+        // enforces that), so this is a no-op there.
+        if (mPcm && targetSampleRate > 0 && sfinfo.samplerate > 0 &&
+            sfinfo.samplerate != targetSampleRate && sfinfo.channels == 1) {
+          int outFrames = 0;
+          short *conv = resampleMono16((const short *)mPcm, (int)sfinfo.frames,
+                                       sfinfo.samplerate, targetSampleRate,
+                                       &outFrames);
+          if (conv && outFrames > 0) {
+            // mPcm is always new char[] (see the destructor); keep that.
+            char *buf = new char[(size_t)outFrames * 2];
+            if (buf) {
+              memcpy(buf, conv, (size_t)outFrames * 2);
+              delete[] mPcm;
+              mPcm = buf;
+              mSize = outFrames * 2;
+            }
+          }
+          delete[] conv;
         }
       }
   };

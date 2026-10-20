@@ -245,6 +245,32 @@ for spec in "ekho|-v Mandarin -f $SIM/zh_long.txt -o $SIM/rss.wav" \
   printf '  %-14s %8s KB\n' "$prog" "$kb"
 done
 
+hr "9. a lone letter keeps its duration"
+# The 26 alphabet/<letter>.wav recordings are 16 kHz upstream and get spliced
+# into a stream running at the *pack* rate. Copied verbatim they played 3x too
+# fast on the 48 kHz pack (2.76x on the 44.1 kHz one); PhoneticSymbol::
+# readSndfile() now resamples them to the pack rate, and the shipped files are
+# converted to 48 kHz on top of that. k.wav is 0.292 s of audio and the Mandarin
+# tempo divides by 2.39, so a lone K belongs at ~0.110 s at any output rate --
+# it used to be 0.041 s here, which is what this section pins down.
+secs_of() {
+  awk -v b="$(stat -c%s "$1")" \
+      -v r="$(od -An -tu4 -j 28 -N 4 "$1" | tr -d ' ')" \
+      'BEGIN{printf "%.4f", (b-44)/(r ? r : 176400)}'
+}
+for spec in "48000|2" "44100|1"; do
+  r=${spec%%|*}; c=${spec#*|}
+  "$OUT/ekho" -v Mandarin --samplerate="$r" --channels="$c" K \
+    -o "$SIM/letter_$r.wav" >/dev/null 2>&1
+  d=$(secs_of "$SIM/letter_$r.wav")
+  printf '  %5s Hz / %sch   K = %s s\n' "$r" "$c" "$d"
+  if awk -v d="$d" 'BEGIN{exit !(d > 0.095 && d < 0.125)}'; then
+    ok "K at $r Hz is $d s"
+  else
+    bad "K at $r Hz is $d s, expected ~0.110 s (resampled away?)"
+  fi
+done
+
 printf '\n'
 if [ "$FAILED" = 0 ]; then
   echo "sim: all assertions passed"

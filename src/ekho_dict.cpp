@@ -378,9 +378,14 @@ bool Dict::isPunctuationChar(int code, EkhoPuncType mode) {
 
 void Dict::addSpecialSymbols(void) {
   // add alphabets
-  // @fixme: disable alphabet because the samplerate may not correct
-  string voicePath = mDataPath + "/alphabet";
-
+  //
+  // Upstream shipped these with "@fixme: disable alphabet because the
+  // samplerate may not correct" -- the 26 letter samples are recorded at
+  // 16 kHz while the pack is 44.1 or 48 kHz, so copied verbatim they play
+  // 2.76x-3x too fast. They are no longer loaded here: the resampler needs the
+  // *pack* rate (PhoneticSymbol::readSndfile / resample.h), and the pack is
+  // only read later, in setVoice(). The first letter now loads on first use,
+  // in PhoneticSymbol::getPcm(FILE*).
   for (char c = 'a'; c <= 'z'; c++) {
     char *cs = new char[3];
     cs[0] = '\\';
@@ -389,8 +394,6 @@ void Dict::addSpecialSymbols(void) {
     PhoneticSymbol *ps = new PhoneticSymbol(cs);
     mSpecialSymbols.push_back(ps);
     mSpecialChars.push_back(cs);
-    int size = 0;
-    ps->getPcm(voicePath.c_str(), "wav", size);
     addDictItem(c, ps);
     addDictItem(c - ('a' - 'A'), ps);
   }
@@ -542,6 +545,9 @@ int Dict::setVoice(string voice) {
   if (voice == "English") {
     mSfinfo.samplerate = 16000;
     mSfinfo.channels = 1;
+    // No pack for English; espeak feeds 16 kHz, so that is the rate the
+    // alphabet samples have to be in too (see PhoneticSymbol::readSndfile).
+    PhoneticSymbol::targetSampleRate = mSfinfo.samplerate;
     return 0;
   } else if (mLanguage == TIBETAN) {
     key_char = 3904;  // the first char in bo_list
@@ -1760,6 +1766,10 @@ void Dict::loadEkhoVoiceFile(string path) {
 
   memset(&mSfinfo, 0, sizeof(mSfinfo));
   mSfinfo.samplerate = samplerate;
+  // The pack rate is now known: from here on every sample the engine touches
+  // must be in this rate, including the 16 kHz alphabet files (readSndfile()
+  // resamples them; see resample.h).
+  PhoneticSymbol::targetSampleRate = samplerate;
   // @todo: support multi-channels
   mSfinfo.channels = 1;
   if (mVoiceFileType && strcmp(mVoiceFileType, "gsm") == 0) {

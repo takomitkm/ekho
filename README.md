@@ -24,6 +24,8 @@ needs and what it gives you:
     scripts/server-test.sh       # real HTTP server, sections 0-8
     scripts/reg-44k.sh           # the 44.1 kHz byte-exact anchor + the 48 kHz tempo check
     scripts/make-samples.sh      # render listening samples to $HOME/ekho-samples
+    scripts/convert-voice.c      # re-encode a .voice pack at another rate (built by hand)
+    scripts/convert-alphabet.c   # same for the 26 per-letter samples (built by hand)
 
 Added on top of upstream:
 
@@ -98,17 +100,23 @@ Added on top of upstream:
   **Cantonese is not converted**: `jyutping.voice` is still 16 kHz, so that voice does
   get resampled at run time.
 
+  **The alphabet samples are converted as well, and conversion alone is not
+  enough.** `ekho-data/alphabet/*.wav` -- the 26 per-letter recordings behind
+  `A 股`, initials and spelled-out letters -- are 16 kHz upstream, so they used to
+  play 3x too fast on the 48 kHz pack and 2.76x on the 44.1 kHz one (upstream's
+  `@fixme: disable alphabet because the samplerate may not correct`).
+  `scripts/convert-alphabet.c` rewrites them at 48 kHz (originals kept beside them
+  as `*.wav.16k`), but one converted copy cannot serve three packs: the engine
+  resamples any sample whose rate differs from the pack's rate at load time, in
+  `PhoneticSymbol::readSndfile()` (`src/resample.h`, the same windowed-sinc kernel
+  as `convert-voice`). A lone `K` now renders in 0.110 s at *every* combination --
+  48 kHz or 44.1 kHz pack, 48 kHz or 44.1 kHz output, mono or stereo -- where it
+  used to be 0.041-0.044 s, and Cantonese letters (16 kHz pack) are unchanged at
+  0.291 s. The tempo itself is the pack's usual one: Mandarin speeds the recorded
+  syllables up 2.39x (`baseDelta` 139), letters included.
+
 ### Known issues
 
-* **Single letters are played at the wrong speed.** The `alphabet/*.wav` files that
-  `src/ekho_dict.cpp` loads in `addSpecialSymbols()` are 16 kHz, and
-  `PhoneticSymbol::readSndfile()` copies them without resampling while
-  `src/synthesize.cpp` feeds them into the stream at the *pack* rate. A lone Latin
-  letter (an initial, `A 股`, or a letter spelled out on its own) is therefore 3x too
-  fast and too high with the 48 kHz pack, 2.76x with the 44.1 kHz one -- inherited
-  from upstream, which marks it `@fixme`, not introduced here. The obvious fix is to
-  convert the 26 per-letter files to 48 kHz; that is a one-line decision away but
-  still open, because it also decides what happens to the 44.1 kHz pack.
 * **Voice data must be supplied.** `ekho-data/*.voice` and the pinyin/jyutping
   sample trees are not in the repository (they are large binaries); the `.index`
   files are. A fresh clone builds but cannot synthesise until voice data is
