@@ -22,13 +22,27 @@ needs and what it gives you:
     scripts/build-native.sh      # configure + make into out/ (ekho, ekho-stream, ekho-server)
     scripts/sim.sh               # correctness and streaming assertions; non-zero exit on failure
     scripts/server-test.sh       # real HTTP server, sections 0-8
+    scripts/reg-44k.sh           # the 44.1 kHz byte-exact anchor + the 48 kHz tempo check
     scripts/make-samples.sh      # render listening samples to $HOME/ekho-samples
 
 Added on top of upstream:
 
-* **ALSA output** (`src/alsa_backend.{h,cpp}`), used by `ekho --play`. The library
-  is `dlopen`ed, so building needs the vendored headers only -- no `libasound2-dev`,
-  and no `libasound.so.2` in DT_NEEDED.
+* **ALSA output** (`src/alsa_backend.{h,cpp}`): `dlopen`-based, so building needs
+  the vendored headers only -- no `libasound2-dev`, and no `libasound.so.2` in
+  DT_NEEDED. It is **not wired to anything yet**: there is no `--play` option,
+  `Ekho::play()` shells out to an external player that is never configured, and
+  `Ekho::blockSpeak()` is a stub that returns 0 without synthesising. Writing a
+  WAV file, or reading the HTTP stream, is the supported path.
+* **Output format: 48 kHz / 16-bit / 2 channels by default.** That is the only
+  format the board's USB speaker accepts, so the default needs no conversion
+  anywhere on the target. `--samplerate=HZ` and `--channels=1|2` override it in
+  all three binaries, and `--samplerate=0` means "use the voice pack's own rate"
+  (48 kHz for the shipped pack). The old default, 44.1 kHz / mono, is still
+  reachable, and `scripts/reg-44k.sh` pins its output byte for byte.
+* **`-v English` synthesises.** It used to run into a stub in
+  `src/synthesize.cpp` that returned without producing audio: 44-byte silent
+  WAV, exit status 0. It now goes through espeak-ng like the mixed-text path
+  does, with the same 100 wpm / `en-us+f3` default as above.
 * **Streaming synthesis** (`src/streaming.{h,cpp}`, `Ekho::synth4()`): append text as
   it arrives and get PCM out before the text is finished. Punctuation forces a
   segment break; numbers and units are normalised first.
@@ -44,7 +58,7 @@ Added on top of upstream:
   rate is 100 wpm and the espeak voice is `en-us+f3`, both picked by ear on 2026-10-17
   (see `scripts/make-samples.sh` groups 05 and 06); `--english-voice` overrides the
   voice for one run and `EKHO_ESPEAK_VOICE` moves the default without a rebuild.
-* **The Mandarin pack is 48 kHz, and 48 kHz / 2ch is the default output.** The tracked
+* **The Mandarin pack is 48 kHz, so pack rate equals output rate.** The tracked
   `ekho-data/pinyin.index` describes a 48 kHz version of the upstream 44.1 kHz pack,
   and `scripts/convert-voice.c` produces the matching `pinyin.voice` from the upstream
   one. The 44.1 kHz originals stay next to them as `*.44k` -- they are what the
@@ -60,13 +74,23 @@ Added on top of upstream:
   peak RSS from 117 MB to 48 MB on a text reaching every syllable in the dictionary
   (small sentences 25.3 -> 24.5 MB). It was dropped because that resampler's 4 kHz
   low-pass dulls the sibilants. The trade is explicit: the 48 kHz pack is
-  136,359,454 B against the 44.1 kHz original's 125,287,518 B, so the resident-RAM
-  saving is gone -- **RSS at 48 kHz has not been measured, and neither has the CPU the
-  missing resample would save.**
+  136,359,454 B against the 44.1 kHz original's 125,287,518 B (+8.8%), so the
+  resident-RAM saving is gone. Measured on `07-long-news`, which reaches a subset of
+  the dictionary: peak RSS 29.5 MB one-shot and 28.8 MB streaming, against 29.1 and
+  28.5 MB with the 44.1 kHz pack -- +1% there; the full +8.8% only shows up in a
+  session that touches every syllable. Synthesis CPU is unchanged within noise
+  (554 vs 553 ms warm cache), so the resample was never the bottleneck on x86 and no
+  ARM saving is claimed. What does change is the output itself: energy above the
+  source's 22.05 kHz band drops from -70 dB to -83 dB relative to full-band RMS,
+  i.e. the interpolating resampler's imaging is gone.
   Speaking rate holds: `scripts/reg-44k/expected.md5` records the 44.1 kHz / mono
   bytes of seven reference texts and `scripts/reg-44k.sh` re-checks them, then measures
   the 48 kHz / 2ch renders against them (recorded 2026-10-19: mean -0.17%, worst
-  -1.32%; it fails past mean 0.5% or any single text 2%). The syllable-join threshold
+  -1.32%; it fails past mean 0.5% or any single text 2%). Making that hold needed one
+  engine fix: `setSpeed()`'s tempo constant was computed with two integer divisions,
+  which truncated a duration expressed in 44.1 kHz frames and cost exactly one tempo
+  step (-0.42%, `baseDelta` 138 instead of 139) on a 48 kHz pack; it is floating point
+  now and the 44.1 kHz result is unchanged. The syllable-join threshold
   is **not** rate-scaled at 44.1 kHz and above -- scaling it was measured on the
   48 kHz pack and made things worse (worst 3.4%), so `quiet_level` stays equal to
   `mOverlap` there; see the comment in `src/libekho_impl.cpp`. The ~11% and ~12%
@@ -76,13 +100,15 @@ Added on top of upstream:
 
 ### Known issues
 
-* **There is no standalone English voice.** `-v English` and `-v en` reach a stub
-  in `src/synthesize.cpp` that returns without synthesising: you get a 44-byte
-  silent WAV and exit status 0. This is inherited from upstream (English used to
-  go through an older API), and it is deliberately not fixed here. English words
-  *do* work through a Chinese voice on ASCII text -- that path is espeak-ng, and
-  `scripts/make-samples.sh` group 03 uses it. `GET /voices` lists `English`
-  because its dictionary loads; that is all it promises.
+* **Single letters are played at the wrong speed.** The `alphabet/*.wav` files that
+  `src/ekho_dict.cpp` loads in `addSpecialSymbols()` are 16 kHz, and
+  `PhoneticSymbol::readSndfile()` copies them without resampling while
+  `src/synthesize.cpp` feeds them into the stream at the *pack* rate. A lone Latin
+  letter (an initial, `A 股`, or a letter spelled out on its own) is therefore 3x too
+  fast and too high with the 48 kHz pack, 2.76x with the 44.1 kHz one -- inherited
+  from upstream, which marks it `@fixme`, not introduced here. The obvious fix is to
+  convert the 26 per-letter files to 48 kHz; that is a one-line decision away but
+  still open, because it also decides what happens to the 44.1 kHz pack.
 * **Voice data must be supplied.** `ekho-data/*.voice` and the pinyin/jyutping
   sample trees are not in the repository (they are large binaries); the `.index`
   files are. A fresh clone builds but cannot synthesise until voice data is
@@ -90,7 +116,9 @@ Added on top of upstream:
   it. Ekho writes `.index`/`.voice` into that directory when the index is missing,
   so it must be writable -- that is the historical reason people ran it as root
   once; a relocatable kit with its own data directory has no such problem.
-* **ALSA has never been run on the target board.** The `dlopen` path compiles and
-  links against the target's symbol versions, but whether the board has a
-  usable sound device is untested.
+* **Nothing plays audio by itself.** `ekho "text"` without `-o` produces no sound
+  (there is no `--play`; see the ALSA bullet above), and `Ekho::blockSpeak()` is a
+  stub. The board's speaker has been probed and accepts 48 kHz / S16_LE / 2ch only
+  -- which is why that is the default -- but the ALSA backend has never been called
+  on it.
 

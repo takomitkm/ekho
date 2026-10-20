@@ -11,10 +11,11 @@
 #
 # Each .wav gets a matching .txt holding exactly the text that was spoken.
 #
-# One thing to know before reading the output: there is no standalone English
-# voice in this tree. `-v English` / `-v en` reach a stub that returns silence
-# (see README.md, "Known issues"); English words are spoken by espeak-ng through
-# a Chinese voice on ASCII text, so the group-03 files use Mandarin on purpose.
+# One thing to know before reading the output: `-v English` / `-v en` used to
+# reach a stub that returned silence; it synthesises through espeak-ng now (see
+# README.md, "Added on top of upstream"). English words inside Chinese text go
+# through the same espeak-ng path, so the group-03 files use Mandarin on purpose
+# -- that is the mixed-language case a caller actually hits.
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
