@@ -1,5 +1,6 @@
 # build products
 /out/
+/reg-44k-out/
 /build-aux/
 /m4/
 /Makefile
