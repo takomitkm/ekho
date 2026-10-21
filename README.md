@@ -1,22 +1,13 @@
 # ekho
 
-Read <a href='https://github.com/hgneng/ekho/blob/master/INSTALL'>INSTALL</a> file if you have trouble in building.
-
-Chinese text-to-speech engine. It's part of <a href='http://www.eguidedog.net'>eGuideDog project</a>. Here is <a href='http://www.eguidedog.net/ekho.php'>Ekho TTS's home page</a>.
-
-This repository is forked from <a href='https://sourceforge.net/p/e-guidedog/code/HEAD/tree/eGuideDog_TTS/'>SourceForge</a> at version r2418 (and patch to r2478).
-
-Voice files are not included. We can get them from a distribution package or <a href='https://sourceforge.net/projects/e-guidedog/files/Ekho-Voice-Data/0.2/'>Ekho Voice Data's download page</a>. To replace Mandarin voice files, we can replace the whole pinyin folder, then remove pinyin.index and pinyin.voice. Re-running ekho will generate new pinyin.index and pinyin.voice from new voice files.
-
-In order to create your own voice, please refere to <a href='http://eguidedog.net/doc/doc_make_new_voice_cn.php'>如何为Ekho添加新的声音</a>.
-
 ## This fork: Linux only
 
-This tree is a Linux-only fork of the above. Windows build products are gone, the
-build is autotools only, and a few things were added or fixed. It is published at
-<https://github.com/takomitkm/ekho> -- itself a fork of
-<https://github.com/hgneng/ekho>, pushed there as a fresh snapshot (the two
-histories share no common ancestor; the fork's `master` is this tree). What it
+This tree is a Linux-only fork of <https://github.com/hgneng/ekho>: Windows build
+products are gone, the build is autotools only, and a few things were added or
+fixed. It is published at <https://github.com/takomitkm/ekho-AIGC> (the
+repository was renamed from `/ekho`; the old path redirects), pushed as a fresh
+snapshot -- the two histories share no common ancestor, and the fork's `master`
+is this tree. The upstream project's own description closes this file. What it
 needs and what it gives you:
 
     scripts/build-native.sh      # configure + make into out/ (ekho, ekho-stream, ekho-server)
@@ -136,3 +127,17 @@ Added on top of upstream:
   -- which is why that is the default -- but the ALSA backend has never been called
   on it.
 
+## Upstream ekho
+
+What follows is the upstream README's own description of the project, inherited
+uncut except where a pointer says otherwise:
+
+Read <a href='https://github.com/hgneng/ekho/blob/master/INSTALL'>INSTALL</a> file if you have trouble in building.
+
+Chinese text-to-speech engine. It's part of <a href='http://www.eguidedog.net'>eGuideDog project</a>. Here is <a href='http://www.eguidedog.net/ekho.php'>Ekho TTS's home page</a>.
+
+This repository is forked from <a href='https://sourceforge.net/p/e-guidedog/code/HEAD/tree/eGuideDog_TTS/'>SourceForge</a> at version r2418 (and patch to r2478).
+
+Voice files are not included. We can get them from a distribution package or <a href='https://sourceforge.net/projects/e-guidedog/files/Ekho-Voice-Data/0.2/'>Ekho Voice Data's download page</a>. To replace Mandarin voice files, we can replace the whole pinyin folder, then remove pinyin.index and pinyin.voice. Re-running ekho will generate new pinyin.index and pinyin.voice from new voice files. (In this fork, `scripts/fetch-voice.sh` supplies the 0.2 sources.)
+
+In order to create your own voice, please refere to <a href='http://eguidedog.net/doc/doc_make_new_voice_cn.php'>如何为Ekho添加新的声音</a>.
