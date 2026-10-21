@@ -18,6 +18,7 @@ needs and what it gives you:
     scripts/convert-voice.c      # re-encode a .voice pack at another rate (built by hand)
     scripts/convert-alphabet.c   # same for the 26 per-letter samples (built by hand)
     scripts/fetch-voice.sh       # fetch the voice data git does not carry (SourceForge 0.2, md5-pinned)
+    scripts/funasr_bridge.py     # ASR-side glue: POST text to ekho-server, play or save the reply
 
 Added on top of upstream:
 
