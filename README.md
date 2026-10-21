@@ -26,6 +26,7 @@ needs and what it gives you:
     scripts/make-samples.sh      # render listening samples to $HOME/ekho-samples
     scripts/convert-voice.c      # re-encode a .voice pack at another rate (built by hand)
     scripts/convert-alphabet.c   # same for the 26 per-letter samples (built by hand)
+    scripts/fetch-voice.sh       # fetch the voice data git does not carry (SourceForge 0.2, md5-pinned)
 
 Added on top of upstream:
 
@@ -65,7 +66,9 @@ Added on top of upstream:
   and `scripts/convert-voice.c` produces the matching `pinyin.voice` from the upstream
   one. The 44.1 kHz originals stay next to them as `*.44k` -- they are what the
   converter reads, and both pairs are gitignored, so a clone has to supply them before
-  the pack can be re-derived or the regression anchor run.
+  the pack can be re-derived or the regression anchor run. `scripts/fetch-voice.sh`
+  downloads the pinned upstream sources (SourceForge 0.2, sizes and md5s in its
+  header) and lays `pinyin/`, `jyutping/` and the 16 kHz letter wavs out.
   The rate follows the target board: its only playback device accepts
   48 kHz / S16_LE / 2ch and nothing else, so `ekho`, `ekho-server` and `ekho-stream`
   all default there, and pack rate equals output rate -- no sonic resample on every
@@ -124,6 +127,9 @@ Added on top of upstream:
   it. Ekho writes `.index`/`.voice` into that directory when the index is missing,
   so it must be writable -- that is the historical reason people ran it as root
   once; a relocatable kit with its own data directory has no such problem.
+  `scripts/fetch-voice.sh` fetches the upstream sources (md5-pinned, SourceForge
+  0.2 page) and lays them out; the build-generate-convert-anchor recipe sits in
+  its header.
 * **Nothing plays audio by itself.** `ekho "text"` without `-o` produces no sound
   (there is no `--play`; see the ALSA bullet above), and `Ekho::blockSpeak()` is a
   stub. The board's speaker has been probed and accepts 48 kHz / S16_LE / 2ch only
