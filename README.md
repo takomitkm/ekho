@@ -128,6 +128,159 @@ Added on top of upstream:
   -- which is why that is the default -- but the ALSA backend has never been called
   on it.
 
+## Making sound
+
+Two ways to get audio out of this tree, from the simplest to the one that
+serves other programs. Both were run against a real board with the USB
+speaker attached, so the commands below are known to work, not guessed.
+
+### 1. One shot: render a file, then play it
+
+The shortest path from a line of text to sound. It needs the voice data and
+a sound device, nothing else:
+
+```bash
+export EKHO_DATA_PATH=/path/to/ekho-data          # pinyin.index/pinyin.voice, the dicts
+export ESPEAK_DATA_PATH=/path/to/espeak-ng-data    # only for the English voice
+
+bin/ekho -v Mandarin --samplerate=48000 --channels=2 -f text.txt -o out.wav
+aplay out.wav                                      # or: paplay out.wav
+```
+
+* `-f text.txt` reads the text from a file and `-f -` from stdin, which keeps
+  UTF-8 Chinese out of the shell -- a terminal or a Windows console can mangle
+  it, and a mangled character is a mangled syllable, not a display glitch.
+* The WAV is 16-bit; `aplay` reads the header, so no format flags are needed.
+* `--samplerate=48000 --channels=2` is already the default, and it is the
+  board speaker's only accepted format. `--samplerate=0` means "use the voice
+  pack's own rate".
+* If the speaker is not the default card, name it: `aplay -l` lists the
+  cards, e.g. `aplay -D plughw:CARD=MCP01,DEV=0 out.wav`.
+
+On the board, whose kit lives in `/root/ekho-bench` with the 48 kHz pack in
+`p48/`:
+
+```bash
+cd /root/ekho-bench
+export ESPEAK_DATA_PATH=/root/ekho-bench/espeak-ng-data EKHO_DATA_PATH=/root/ekho-bench/p48
+echo 你好，世界。 | bin/ekho -v Mandarin --samplerate=48000 --channels=2 -f - -o /tmp/say.wav \
+  && aplay -D plughw:CARD=MCP01,DEV=0 /tmp/say.wav
+```
+
+Two traps that cost real time once:
+
+* **A build can carry a compiler-baked espeak path.** The board's binary
+  defaults to the cross-compile host's `D:/yzd/...` and dies with
+  `Error processing file '...espeak-ng-data/phontab'` unless
+  `ESPEAK_DATA_PATH` is set. Setting it always is the safe habit.
+* **`ekho --help` can be older than the binary.** The board build does not
+  list `--samplerate`/`--channels` in its help text, but both are accepted;
+  `strings bin/ekho | grep -- --samplerate` tells the truth.
+
+### 2. As a service: ekho-server
+
+`ekho-server` is an HTTP daemon that takes text and returns audio. It does
+not play anything itself (see Known issues above): the client plays the
+reply.
+
+```bash
+export EKHO_DATA_PATH=/path/to/ekho-data
+export ESPEAK_DATA_PATH=/path/to/espeak-ng-data
+out/ekho-server --port 2046 --out-dir /tmp
+```
+
+Useful flags: `--host=ADDR` (default `0.0.0.0` -- it listens on every
+interface unless told otherwise), `--voice=VOICE`, `--samplerate=HZ`,
+`--channels=1|2`, `--english-speed=DELTA`, `--ring-ms=N`, `--max-segment-chars=N`,
+`--no-save`, `--verbose`.
+
+| request | answer |
+|---|---|
+| `POST /tts` | chunked 16-bit PCM (`audio/L16;rate=48000;channels=2;bit=16`), emitted clause by clause while the text is still being synthesised |
+| `POST /tts?wait=1` | one complete WAV (`audio/wav`) with a correct `Content-Length` |
+| `GET /health` | `{"status":"ok","voice":"Mandarin","sample_rate":48000,"channels":2,"ring_ms":4000}` |
+| `GET /voices` | `{"default":"Mandarin","voices":["Mandarin","Cantonese","English"]}` |
+
+The request body is the UTF-8 text, either Content-Length framed or chunked.
+`?wait=1` and the stream carry the same samples -- the WAV is exactly the
+44-byte RIFF header in front of the PCM. `X-Ekho-File` names the copy the
+server kept under `--out-dir`, and it arrives before the audio, so a client
+can note the path and keep the file instead of the stream;
+`X-Ekho-Sample-Rate` and `X-Ekho-Channels` state the format of the body.
+
+Making sound from it:
+
+```bash
+# a WAV you can play
+curl -s -X POST --data-binary '你好，世界。' \
+     'http://127.0.0.1:2046/tts?wait=1' -o out.wav
+aplay out.wav
+
+# the same audio as raw PCM, as it is synthesised
+curl -sN -X POST --data-binary '你好，世界。' \
+     http://127.0.0.1:2046/tts -o out.pcm
+aplay -f S16_LE -r 48000 -c 2 -t raw out.pcm
+```
+
+Query parameters on `/tts`: `voice=NAME`, `speed=DELTA`, `pitch=DELTA`,
+`volume=DELTA`, `english_speed=DELTA`, and `fmt=wav` as an alias for
+`wait=1`.
+
+The board image has no `curl`; the same two calls from there:
+
+```bash
+python3 - <<'PY'
+import urllib.request
+req = urllib.request.Request('http://127.0.0.1:2046/tts?wait=1',
+                             data='你好，世界。'.encode('utf-8'), method='POST')
+open('/tmp/out.wav', 'wb').write(urllib.request.urlopen(req, timeout=120).read())
+PY
+aplay /tmp/out.wav
+```
+
+Under systemd, a unit that keeps it up:
+
+```ini
+[Unit]
+Description=ekho TTS server
+After=network.target
+
+[Service]
+Environment=EKHO_DATA_PATH=/opt/ekho/ekho-data
+Environment=ESPEAK_DATA_PATH=/opt/ekho/espeak-ng-data
+ExecStart=/opt/ekho/out/ekho-server --host 127.0.0.1 --port 2046 --out-dir /var/tmp/ekho
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`--host 127.0.0.1` on purpose: this is plain HTTP with no authentication, so
+do not leave it on `0.0.0.0` without a firewall in front of it.
+
+### 3. Feeding it from an ASR side
+
+`scripts/funasr_bridge.py` wraps both ends of that HTTP service for an ASR
+front end (FunASR or anything else):
+
+```bash
+python3 scripts/funasr_bridge.py "识别出的文本"                    # POST, then play
+python3 scripts/funasr_bridge.py --save out.wav "文本"             # POST, then save
+python3 scripts/funasr_bridge.py listen --bind 0.0.0.0 --port 2047 # the ASR side only POSTs
+```
+
+```python
+import sys
+sys.path.insert(0, "<this repo>/scripts")
+from funasr_bridge import speak
+speak("识别出的文本", server="http://127.0.0.1:2046")   # blocks until spoken
+```
+
+One limit to know about: the server serialises synthesis process-wide (the
+engine keeps global callbacks, and espeak-ng keeps global voice state), so
+one request at a time is all it really does. That is deliberate, and still
+far faster than realtime.
+
 ## Upstream ekho
 
 What follows is the upstream README's own description of the project, inherited
