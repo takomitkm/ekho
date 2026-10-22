@@ -276,6 +276,42 @@ from funasr_bridge import speak
 speak("识别出的文本", server="http://127.0.0.1:2046")   # blocks until spoken
 ```
 
+Two FunASR flavours exist, and the hook point differs:
+
+* **The official package** (`pip install funasr`): `AutoModel.generate()`
+  returns a list of dicts with a `"text"` field, and there is no per-result
+  callback -- `progress_callback` reports progress only. The hook is
+  therefore after the call:
+
+  ```python
+  from funasr import AutoModel
+  res = model.generate(input=wav)        # list[dict]; res[0]["text"]
+  speak(res[0]["text"])
+  ```
+
+  For a streaming model, keep the `cache` dict across calls and speak the
+  text of the call that was made with `is_final=True`.
+
+* **The ONNX runtime** (`funasr_onnx`, what the board runs): there is no
+  `AutoModel` at all. The model object is called directly -- offline
+  `m(wave)`, streaming `m(chunk, param_dict={"is_final": False, "cache":
+  cache})` -- and the text comes back in several shapes, so normalise it
+  first (the chain's own `_text_from()` already does: `str`,
+  `{"preds": ...}`, `{"text": ...}`, and the offline `preds` pair whose
+  first element is the whole sentence). The hook is wherever that text
+  lands:
+
+  ```python
+  from funasr_onnx.paraformer_bin import Paraformer
+  m = Paraformer(model_dir, batch_size=1, quantize=True, intra_op_num_threads=4)
+  text = _text_from(m(wave))
+  speak(text)
+  ```
+
+  The board has no `torch` and no `modelscope` -- the official package needs
+  both, and its wheels are far too heavy for a 1 GB board -- so the ONNX
+  runtime is the sane shape there.
+
 One limit to know about: the server serialises synthesis process-wide (the
 engine keeps global callbacks, and espeak-ng keeps global voice state), so
 one request at a time is all it really does. That is deliberate, and still
